@@ -37,6 +37,7 @@ import {
   SaveData,
   SaveStatusState,
 } from './types';
+import {platformBridge} from './platform/platformBridge';
 import {gameAudio} from './utils';
 import BackgroundMusic from './utils/BackgroundMusic';
 import {
@@ -682,6 +683,14 @@ export default function App() {
           checkpoint: null,
         };
       });
+
+      platformBridge.reportScore({
+        level: levelNum,
+        score: nextScore,
+        stars: relicIds.length,
+        timeSeconds: 0,
+        moves: 0,
+      });
     },
     [updateSaveData],
   );
@@ -719,6 +728,28 @@ export default function App() {
 
   // --- PLAYGROUND SDK SCORE & LIFECYCLE REPORTING ---
   usePlaygroundGameLifecycle(gameState, sdk);
+
+  // --- UNIFIED PLATFORM BRIDGE (YouTube Playables, Facebook Gaming, Standalone) ---
+  useEffect(() => {
+    platformBridge.init().then(() => {
+      platformBridge.reportGameReady();
+    });
+
+    const unsubPause = platformBridge.onPause(() => {
+      if (gameStateRef.current.status === 'PLAYING') {
+        setIsGameMenuOpen(true);
+      }
+    });
+
+    const unsubAudio = platformBridge.onAudioMuteChange((isMuted) => {
+      handleUpdateSettings({sfxMuted: isMuted, musicMuted: isMuted});
+    });
+
+    return () => {
+      unsubPause();
+      unsubAudio();
+    };
+  }, [handleUpdateSettings]);
 
   // Auto-start when ?autoplay is in the URL
   const hasAutoplayed = useRef(false);

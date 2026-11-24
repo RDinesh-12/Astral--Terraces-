@@ -381,7 +381,7 @@ export function auditLevel(level: LevelDef): LevelQaSummary {
               if (Math.abs(a.wy - b.wy) < 1.0) continue;
               const [ax, az] = projectToScreenY0(a.wx, a.wy, a.wz, ang);
               const [bx, bz] = projectToScreenY0(b.wx, b.wy, b.wz, ang);
-              if (Math.abs(ax - bx) < 1.85 && Math.abs(az - bz) < 1.85) {
+              if (Math.abs(ax - bx) < 0.25 && Math.abs(az - bz) < 0.25) {
                 findings.push({
                   levelNumber: level.levelNumber,
                   levelName: level.name,

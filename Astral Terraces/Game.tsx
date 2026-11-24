@@ -105,7 +105,7 @@ interface SceneProps {
   cosmetic: TravelerCosmetic;
   dragSensitivity: number;
   highQualityEffects: boolean;
-  containerRef: React.RefObject<HTMLDivElement>;
+  containerRef: React.RefObject<HTMLDivElement | null>;
   initialCollectedRelics: string[];
   initialCheckpoint: ActiveLevelCheckpoint | null;
 }
