@@ -1,0 +1,73 @@
+{
+  "schema": [
+    {
+      "name": "moveSpeed",
+      "type": "number",
+      "label": "Traveler Speed",
+      "default": 4.5,
+      "min": 2.5,
+      "max": 7.5,
+      "step": 0.5
+    },
+    {
+      "name": "mechanismSpeed",
+      "type": "number",
+      "label": "Architecture Speed",
+      "default": 3.5,
+      "min": 2.0,
+      "max": 6.0,
+      "step": 0.5
+    },
+    {
+      "name": "cameraDistance",
+      "type": "number",
+      "label": "Camera Orbit Distance",
+      "default": 24,
+      "min": 16,
+      "max": 34,
+      "step": 1
+    },
+    {
+      "name": "pointsPerLevel",
+      "type": "number",
+      "label": "Points Per Chapter",
+      "default": 250,
+      "min": 100,
+      "max": 500,
+      "step": 50
+    },
+    {
+      "name": "pointsPerRelic",
+      "type": "number",
+      "label": "Star Relic Bonus",
+      "default": 150,
+      "min": 50,
+      "max": 300,
+      "step": 25
+    },
+    {
+      "name": "enableParticles",
+      "type": "boolean",
+      "label": "Floating Mist Motes",
+      "default": true
+    },
+    {
+      "name": "defaultMusicVolume",
+      "type": "number",
+      "label": "Default Music Volume",
+      "default": 0.18,
+      "min": 0,
+      "max": 0.5,
+      "step": 0.02
+    }
+  ],
+  "values": {
+    "moveSpeed": 4.5,
+    "mechanismSpeed": 3.5,
+    "cameraDistance": 24,
+    "pointsPerLevel": 250,
+    "pointsPerRelic": 150,
+    "enableParticles": true,
+    "defaultMusicVolume": 0.18
+  }
+}

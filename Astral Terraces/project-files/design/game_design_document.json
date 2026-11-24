@@ -1,0 +1,55 @@
+{
+  "title": "Astral Terraces",
+  "language": [
+    "en"
+  ],
+  "hook": "Guide footsteps through shifting architecture",
+  "game_overview": "Explore serene floating islands by rotating bridges, triggering switches, and aligning impossible pathways in an isometric 3D puzzle adventure.",
+  "artstyle": "low-poly",
+  "genre": "puzzle",
+  "winning_condition": "Complete all ten handcrafted celestial architectural worlds by guiding Pip to each Sanctuary Shrine while optionally discovering Star Relics.",
+  "losing_condition": "None in peaceful exploration; players can reset a puzzle state at any moment if they wish to rethink a configuration.",
+  "player_mode": "single_player",
+  "supported_orientations": [
+    "landscape",
+    "portrait"
+  ],
+  "input_methods": [
+    "touch",
+    "mouse",
+    "keyboard"
+  ],
+  "score_options": {
+    "score_type": "points",
+    "score_order": "higher_is_better"
+  },
+  "low_end_device_support": false,
+  "mobile_playable": true,
+  "content_descriptors": [],
+  "controls": [
+    {
+      "input": "W/A/S/D, Arrow Keys, Virtual D-Pad, or Tap/Click Tile",
+      "action": "Move Pip smoothly across connected walkways, stairs, rotating platforms, and aligned optical seams."
+    },
+    {
+      "input": "Drag Background / Q & R / Orbit Buttons",
+      "action": "Smoothly orbit the isometric world by touch/mouse drag to inspect architecture and snap into 90-degree optical alignments."
+    },
+    {
+      "input": "Tap or Drag Peach Cranks / E / ACT",
+      "action": "Directly turn astrolabe bridges without spinning the camera, or activate lift crystals."
+    }
+  ],
+  "sections": [
+    {
+      "title": "Design Pillars",
+      "content": "1. Celestial Architectural Dreamworld: Muted turquoise, sage green, soft lavender, warm ivory, dusty rose, muted coral, pale gold, and deep indigo unify ten distinct floating sanctuaries. 2. Playable Optical Geometry: True orthographic isometric camera aligns separated elevations edge-to-edge along the exact sightline when rotated into alignment. 3. Local Browser Persistence: Structured localStorage saves track the player's local profile, unlocked levels, collected Star Relics, mid-level checkpoints, mechanism states, and settings without any login or external server.",
+      "summary": "Celestial architectural dreamworld, orthographic perspective illusions, and browser-local persistence."
+    },
+    {
+      "title": "Structural Integrity",
+      "content": "Main Menu (Play/Continue, Level Select, Local Player Profile with editable display name, How to Play, Settings, New Game confirmation) -> 10-World Campaign with automatic discrete checkpoint & relic saving -> In-Game HUD & Pause Menu -> World Complete & Grand Convergence Victory.",
+      "summary": "Main menu with live diorama backdrop, 10-world selection screen, Local Player Profile, Settings, Guide, and localStorage persistence."
+    }
+  ]
+}
