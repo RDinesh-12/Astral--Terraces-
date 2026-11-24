@@ -8,6 +8,10 @@ export default defineConfig({
     react()
   ],
   base: './',
+  server: {
+    host: true,
+    port: 3000
+  },
   build: {
     chunkSizeWarningLimit: 2600,
     rollupOptions: {
