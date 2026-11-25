@@ -31,25 +31,48 @@ class PlatformBridge {
     }
 
     // 1. Detect Facebook Instant Games
-    if (typeof window !== 'undefined' && typeof window.FBInstant !== 'undefined') {
-      try {
-        await window.FBInstant.initializeAsync();
-        this.platform = 'facebook';
-        const p = window.FBInstant.player;
-        if (p) {
-          this.user = {
-            id: p.getID() || 'fb_player',
-            name: p.getName() || 'Facebook Traveler',
-            avatarUrl: p.getPhoto() || undefined,
-            isGuest: false,
-          };
+    const isFacebook =
+      typeof window !== 'undefined' &&
+      (typeof window.FBInstant !== 'undefined' ||
+        window.location.search.includes('fbinstant') ||
+        window.location.hostname.includes('facebook') ||
+        window.location.hostname.includes('fbcdn'));
+
+    if (isFacebook) {
+      if (typeof window.FBInstant === 'undefined') {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://connect.facebook.net/en_US/fbinstant.7.1.js';
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Failed to load FBInstant SDK'));
+            document.head.appendChild(script);
+          });
+        } catch (err) {
+          console.warn('[PlatformBridge] FB script load failed:', err);
         }
-        window.FBInstant.onPause(() => this.triggerPause());
-        this.isInitialized = true;
-        console.log('[PlatformBridge] Facebook Instant Games initialized.');
-        return this.getInfo();
-      } catch (err) {
-        console.warn('[PlatformBridge] FBInstant init failed, falling back:', err);
+      }
+
+      if (typeof window.FBInstant !== 'undefined') {
+        try {
+          await window.FBInstant.initializeAsync();
+          this.platform = 'facebook';
+          const p = window.FBInstant.player;
+          if (p) {
+            this.user = {
+              id: p.getID() || 'fb_player',
+              name: p.getName() || 'Facebook Traveler',
+              avatarUrl: p.getPhoto() || undefined,
+              isGuest: false,
+            };
+          }
+          window.FBInstant.onPause(() => this.triggerPause());
+          this.isInitialized = true;
+          console.log('[PlatformBridge] Facebook Instant Games initialized.');
+          return this.getInfo();
+        } catch (err) {
+          console.warn('[PlatformBridge] FBInstant init failed, falling back:', err);
+        }
       }
     }
 
