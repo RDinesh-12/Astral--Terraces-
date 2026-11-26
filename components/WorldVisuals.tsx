@@ -1348,8 +1348,6 @@ export function PastelEnvironment({
   palette: LevelPalette;
 }) {
   const waterRef = useRef<THREE.Mesh>(null);
-  const cloudsRef = useRef<THREE.Group>(null);
-  const isletsRef = useRef<THREE.Group>(null);
   const motesRef = useRef<THREE.InstancedMesh>(null);
 
   const moteSeeds = useMemo(() => {
@@ -1370,12 +1368,6 @@ export function PastelEnvironment({
     const t = clock.getElapsedTime();
     if (waterRef.current) {
       waterRef.current.position.y = -2.8 + Math.sin(t * 0.85) * 0.06;
-    }
-    if (cloudsRef.current) {
-      cloudsRef.current.rotation.y = t * 0.014;
-    }
-    if (isletsRef.current) {
-      isletsRef.current.position.y = Math.sin(t * 0.65) * 0.28;
     }
     if (enableParticles && motesRef.current) {
       for (let i = 0; i < moteSeeds.length; i++) {
@@ -1410,61 +1402,6 @@ export function PastelEnvironment({
           metalness={0.18}
         />
       </mesh>
-
-      {/* Distant Indigo & Lavender Silhouette Islets + Ruined Towers (Background Depth) */}
-      <group ref={isletsRef}>
-        {[
-          [-20, 1.5, -18, 1.15],
-          [21, 3.4, -17, 1.3],
-          [-22, 2.2, 17, 0.95],
-          [20, 0.9, 18, 1.05],
-          [0, 4.5, -24, 1.4],
-        ].map(([ix, iy, iz, sc], idx) => (
-          <group key={idx} position={[ix, iy, iz]} scale={[sc, sc, sc]}>
-            <mesh position={[0, -1.4, 0]}>
-              <coneGeometry args={[2.2, 3.8, 6]} />
-              <meshStandardMaterial color={THEME.indigoShadow} roughness={0.92} flatShading />
-            </mesh>
-            <mesh position={[0, 0.65, 0]}>
-              <cylinderGeometry args={[2.2, 2.1, 0.4, 6]} />
-              <meshStandardMaterial color={palette.accentPrimary} roughness={0.85} />
-            </mesh>
-            <mesh position={[0.45, 1.6, -0.3]}>
-              <coneGeometry args={[0.42, 1.5, 6]} />
-              <meshStandardMaterial color={THEME.sageDeep} roughness={0.82} />
-            </mesh>
-            <mesh position={[-0.45, 1.5, 0.35]}>
-              <boxGeometry args={[0.52, 1.4, 0.52]} />
-              <meshStandardMaterial color={THEME.lavenderDeep} roughness={0.84} />
-            </mesh>
-          </group>
-        ))}
-      </group>
-
-      {/* Layered soft pastel clouds */}
-      <group ref={cloudsRef}>
-        {[
-          [-16, 8.8, -13],
-          [15, 10.4, -16],
-          [18, 7.2, 13],
-          [-15, 9.2, 16],
-        ].map(([cx, cy, cz], idx) => (
-          <group key={idx} position={[cx, cy, cz]}>
-            <mesh position={[0, 0, 0]}>
-              <sphereGeometry args={[1.65, 10, 10]} />
-              <meshStandardMaterial color="#f8eff2" roughness={0.95} />
-            </mesh>
-            <mesh position={[1.3, -0.3, 0.3]}>
-              <sphereGeometry args={[1.18, 10, 10]} />
-              <meshStandardMaterial color="#f2e6ed" roughness={0.95} />
-            </mesh>
-            <mesh position={[-1.2, -0.35, -0.2]}>
-              <sphereGeometry args={[1.12, 10, 10]} />
-              <meshStandardMaterial color="#f2e6ed" roughness={0.95} />
-            </mesh>
-          </group>
-        ))}
-      </group>
 
       {/* Floating luminous motes */}
       {enableParticles && (

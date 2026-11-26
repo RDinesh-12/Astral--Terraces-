@@ -751,12 +751,13 @@ export default function App() {
     };
   }, [handleUpdateSettings]);
 
-  // Auto-start when ?autoplay is in the URL
+  // Auto-start when ?autoplay or ?autostart=1 is in the URL
   const hasAutoplayed = useRef(false);
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     if (
       !hasAutoplayed.current &&
-      new URLSearchParams(window.location.search).has('autoplay')
+      (params.has('autoplay') || params.get('autostart') === '1')
     ) {
       hasAutoplayed.current = true;
       initGame();

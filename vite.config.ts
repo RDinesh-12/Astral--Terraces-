@@ -13,7 +13,6 @@ export default defineConfig({
     port: 3000
   },
   build: {
-    outDir: 'docs',
     chunkSizeWarningLimit: 2600,
     rollupOptions: {
       output: {
