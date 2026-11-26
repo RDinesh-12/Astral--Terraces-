@@ -189,8 +189,8 @@ export const LEVELS: LevelDef[] = [
         hiddenUntilGroup: 'l2_gate_north',
       },
       {id: 'l2_n2', x: 0, y: 1, z: -8, kind: 'stair', facingY: 0},
-      {id: 'l2_n3', x: 0, y: 2, z: -10, kind: 'lavender', pillarHeight: 3.8},
-      {id: 'l2_goal', x: 0, y: 2, z: -12, kind: 'goal', pillarHeight: 4.8},
+      {id: 'l2_n3', x: 0, y: 1, z: -10, kind: 'lavender', pillarHeight: 3.6},
+      {id: 'l2_goal', x: 0, y: 1, z: -12, kind: 'goal', pillarHeight: 4.2},
     ],
     mechanisms: [
       {
@@ -218,7 +218,7 @@ export const LEVELS: LevelDef[] = [
       {id: 'l2_p3', kind: 'ruinPillar', position: [4, 0, -4.2], scale: 0.85},
       {id: 'l2_p4', kind: 'lanternPedestal', position: [3.8, -1.2, 4.5]},
       {id: 'l2_p5', kind: 'lanternPedestal', position: [-5.5, -1.2, -5.0]},
-      {id: 'l2_p6', kind: 'dome', position: [0, 2, -12], rotationY: 0},
+      {id: 'l2_p6', kind: 'dome', position: [0, 1, -12], rotationY: 0},
     ],
   },
 
@@ -1404,14 +1404,16 @@ export const LEVELS: LevelDef[] = [
         kind: 'mint',
         hiddenUntilGroup: 'l10_gate_upper',
       },
-      // Stage 4: Sky Spire (y = 6): (-4,6,-10) aligns cleanly edge-to-edge with (-6,4,-6) at Angle 1!
+      // Stage 4: Sky Spire (y = 6): (-4,6,-10) aligns cleanly edge-to-edge with (-6,4,-6) at Angle 1,
+      // and the corridor runs west along x=-8 so no upper slab overhangs or stacks over l10_u_edge (-6,4,-6).
       {id: 'l10_sk0', x: -4, y: 6, z: -10, kind: 'mint'},
       {id: 'l10_sk1', x: -6, y: 6, z: -10, kind: 'lavender', pillarHeight: 6.2},
-      {id: 'l10_sk2', x: -6, y: 6, z: -8, kind: 'stone'},
-      {id: 'l10_sk3', x: -6, y: 6, z: -6, kind: 'stone'},
-      {id: 'l10_sk4', x: -6, y: 6, z: -4, kind: 'lavender', pillarHeight: 6.2},
-      {id: 'l10_sk_edge', x: -6, y: 6, z: -2, kind: 'mint'},
+      {id: 'l10_sk2', x: -8, y: 6, z: -10, kind: 'stone'},
+      {id: 'l10_sk3', x: -8, y: 6, z: -8, kind: 'stone'},
+      {id: 'l10_sk4', x: -8, y: 6, z: -6, kind: 'lavender', pillarHeight: 6.2},
+      {id: 'l10_sk5', x: -8, y: 6, z: -4, kind: 'stone'},
       {id: 'l10_sk_rel', x: -8, y: 6, z: -2, kind: 'mint', pillarHeight: 6.2},
+      {id: 'l10_sk_edge', x: -6, y: 6, z: -2, kind: 'mint'},
       // Zenith Sanctuary (y = 8): (-4,8,2) aligns cleanly edge-to-edge with (-6,6,-2) at Angle 0!
       {id: 'l10_z0', x: -4, y: 8, z: 2, kind: 'mint'},
       {id: 'l10_z1', x: -2, y: 8, z: 2, kind: 'lavender', pillarHeight: 7.4},
@@ -1508,8 +1510,8 @@ export const LEVELS: LevelDef[] = [
       {id: 'l10_p1', kind: 'archway', position: [0, 0, 8], rotationY: 0},
       {id: 'l10_p2', kind: 'obelisk', position: [5.5, 0, -4], scale: 1.0},
       {id: 'l10_p3', kind: 'waterfall', position: [-5.5, 0, 0], scale: 1.1},
-      {id: 'l10_p4', kind: 'tower', position: [-8.2, 6, -5.5], scale: 0.9},
-      {id: 'l10_p5', kind: 'sundial', position: [-4.25, 6, -4], scale: 0.85},
+      {id: 'l10_p4', kind: 'tower', position: [-10.2, 6, -5.5], scale: 0.9},
+      {id: 'l10_p5', kind: 'sundial', position: [-6.25, 6, -4], scale: 0.85},
       {id: 'l10_p6', kind: 'lanternPedestal', position: [5.5, -1.2, 7.5]},
       {id: 'l10_p7', kind: 'lanternPedestal', position: [-8.5, -1.2, 5.5]},
       {id: 'l10_p8', kind: 'lanternPedestal', position: [4.0, -1.2, -9.5]},
@@ -1727,4 +1729,69 @@ export function computeOpticalSeamEdges(
     edgeA: [ax + stepX * 0.5, ay, az + stepZ * 0.5],
     edgeB: [bx - stepX * 0.5, by, bz - stepZ * 0.5],
   };
+}
+
+export interface MechanismTriggerResult {
+  allowed: boolean;
+  nextStates: Record<string, number>;
+  labels: string[];
+  blockedNodeId?: string;
+  blockedReason?: string;
+}
+
+/**
+ * Computes resulting mechanism states for triggering `mechIds` (including coupled mechanisms)
+ * while blocking any toggle that would retract a summoned platform out from under Pip.
+ */
+export function resolveMechanismTrigger(
+  level: LevelDef,
+  currentStates: Record<string, number>,
+  mechIds: string[],
+  deltaSteps = 1,
+  occupiedNodeIds: string[] = [],
+): MechanismTriggerResult {
+  const visited = new Set<string>();
+  const queue = [...mechIds];
+  const nextStates = {...currentStates};
+  const labels: string[] = [];
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const def = level.mechanisms.find((m) => m.id === id);
+    if (!def) continue;
+
+    if (def.type === 'rotary') {
+      nextStates[id] = (nextStates[id] ?? def.initialState) + deltaSteps;
+    } else {
+      nextStates[id] = (nextStates[id] ?? def.initialState) === 0 ? 1 : 0;
+    }
+    labels.push(def.label);
+
+    if (def.coupledIds) {
+      for (const cid of def.coupledIds) {
+        if (!visited.has(cid)) queue.push(cid);
+      }
+    }
+  }
+
+  if (labels.length > 0 && occupiedNodeIds.length > 0) {
+    const nextWorld = evaluateLevelNodes(level, nextStates);
+    for (const nodeId of occupiedNodeIds) {
+      if (!nodeId) continue;
+      const evaluated = nextWorld.get(nodeId);
+      if (evaluated && !evaluated.active) {
+        return {
+          allowed: false,
+          nextStates: currentStates,
+          labels: [],
+          blockedNodeId: nodeId,
+          blockedReason: 'Step off the summoned platform first',
+        };
+      }
+    }
+  }
+
+  return {allowed: true, nextStates, labels};
 }

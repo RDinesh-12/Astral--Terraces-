@@ -36,6 +36,7 @@ import {
   evaluateLevelNodes,
   findPathBFS,
   LEVELS,
+  resolveMechanismTrigger,
 } from './levels';
 import {
   ActiveLevelCheckpoint,
@@ -305,7 +306,10 @@ function resolveInitialLevelState(
       : level.startNodeId;
   const startWorld = evalNodes.get(startNodeValid);
 
-  const pos: [number, number, number] = validCheckpoint
+  const useSavedPos = Boolean(
+    validCheckpoint && startNodeValid === validCheckpoint.checkpointNodeId,
+  );
+  const pos: [number, number, number] = useSavedPos && validCheckpoint
     ? [
         Number.isFinite(validCheckpoint.playerPos[0])
           ? validCheckpoint.playerPos[0]
@@ -570,31 +574,29 @@ function Scene({
       deltaSteps = 1,
       overridePlates?: string[],
     ) => {
-      const visited = new Set<string>();
-      const queue = [...mechIds];
-      const nextStates = {...mechStatesRef.current};
-      const labels: string[] = [];
-
-      while (queue.length > 0) {
-        const id = queue.shift()!;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        const def = level.mechanisms.find((m) => m.id === id);
-        if (!def) continue;
-
-        if (def.type === 'rotary') {
-          nextStates[id] = (nextStates[id] ?? def.initialState) + deltaSteps;
-        } else {
-          nextStates[id] = (nextStates[id] ?? def.initialState) === 0 ? 1 : 0;
-        }
-        labels.push(def.label);
-
-        if (def.coupledIds) {
-          for (const cid of def.coupledIds) {
-            if (!visited.has(cid)) queue.push(cid);
-          }
-        }
+      const occupiedNodeIds = [navRef.current.currentNodeId];
+      if (navRef.current.targetNodeId) {
+        occupiedNodeIds.push(navRef.current.targetNodeId);
       }
+
+      const result = resolveMechanismTrigger(
+        level,
+        mechStatesRef.current,
+        mechIds,
+        deltaSteps,
+        occupiedNodeIds,
+      );
+
+      if (!result.allowed) {
+        gameAudio.playErrorBuzz();
+        flashBlocked(
+          result.blockedNodeId ?? navRef.current.currentNodeId,
+          result.blockedReason ?? 'Step off the summoned platform first',
+        );
+        return;
+      }
+
+      const {nextStates, labels} = result;
 
       if (labels.length > 0) {
         setMechStates(nextStates);
@@ -616,8 +618,9 @@ function Scene({
       }
     },
     [
-      level.mechanisms,
+      level,
       flashBanner,
+      flashBlocked,
       pulseInteractAnim,
       onCheckpointUpdate,
       buildCheckpointSnapshot,
@@ -1519,20 +1522,27 @@ function Scene({
   );
 }
 
-function canCreateWebGLContext(): boolean {
-  if (typeof document === 'undefined') return true;
+function probeWebGLCapabilities(): {available: boolean; isSoftwareGl: boolean} {
+  if (typeof document === 'undefined') {
+    return {available: true, isSoftwareGl: false};
+  }
   try {
     const probeCanvas = document.createElement('canvas');
     probeCanvas.width = 1;
     probeCanvas.height = 1;
     const gl = probeCanvas.getContext('webgl2');
-    if (!gl) return false;
+    if (!gl) return {available: false, isSoftwareGl: true};
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+    const gpu = String(gl.getParameter(param) ?? '');
+    const isSoftwareGl =
+      /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
     gl.getExtension('WEBGL_lose_context')?.loseContext();
     probeCanvas.width = 0;
     probeCanvas.height = 0;
-    return true;
+    return {available: true, isSoftwareGl};
   } catch {
-    return false;
+    return {available: false, isSoftwareGl: true};
   }
 }
 
@@ -1627,7 +1637,9 @@ export function Game({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useInput(containerRef, {enabled: true, externalInputRef});
-  const [webGlAvailable, setWebGlAvailable] = useState(canCreateWebGLContext);
+  const [webGlCaps, setWebGlCaps] = useState(probeWebGLCapabilities);
+  const webGlAvailable = webGlCaps.available;
+  const isSoftwareGl = webGlCaps.isSoftwareGl;
   const isMobile = useIsMobile();
 
   const levelIdx = Math.max(
@@ -1641,21 +1653,22 @@ export function Game({
       try {
         const renderer = new THREE.WebGLRenderer({
           ...defaultProps,
-          antialias: true,
+          antialias: !isSoftwareGl,
         });
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.02;
         return renderer;
       } catch (err) {
         console.error(err);
-        setWebGlAvailable(false);
+        setWebGlCaps({available: false, isSoftwareGl: true});
         return new Promise<never>(() => {});
       }
     },
-    [],
+    [isSoftwareGl],
   );
 
   const shadowSize = highQualityEffects ? (isMobile ? 512 : 1024) : 512;
+  const enableGpuPostFx = highQualityEffects && !isSoftwareGl;
 
   return (
     <div ref={containerRef} className="w-full h-full canvas-wrapper">
@@ -1663,8 +1676,8 @@ export function Game({
         <CanvasErrorBoundary>
           <Canvas
             orthographic
-            shadows={highQualityEffects}
-            dpr={highQualityEffects ? [1, 1.5] : [1, 1.25]}
+            shadows={enableGpuPostFx}
+            dpr={isSoftwareGl ? 1 : highQualityEffects ? [1, 1.5] : [1, 1.25]}
             camera={INITIAL_ORTHO_CAMERA}
             gl={createGlRenderer}>
             <Suspense fallback={null}>
@@ -1710,7 +1723,7 @@ export function Game({
                 />
               </Physics>
 
-              {highQualityEffects && (
+              {enableGpuPostFx && (
                 <EffectComposer>
                   <Bloom
                     luminanceThreshold={1.12}
