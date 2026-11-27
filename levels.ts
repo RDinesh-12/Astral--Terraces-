@@ -2115,3 +2115,126 @@ export function findNextHintTarget(
 
   return null;
 }
+
+export interface DustAnchor {
+  id: string;
+  targetId: string;
+  kind: 'plate' | 'rotary' | 'crystal' | 'elevator' | 'perspective' | 'goal';
+  position: Position3D;
+  radius: number;
+  maxHeight: number;
+  count: number;
+  pressed?: boolean;
+}
+
+/**
+ * Collects all functional world anchors across a level (plates, clickable handles,
+ * rotating/elevating platforms, optical alignment nodes, and the goal shrine) so soft
+ * ambient light-dust particles float gently across every interactive element.
+ */
+export function getLevelDustAnchors(
+  level: LevelDef,
+  worldNodes: Map<string, WorldNodePos>,
+  mechStates: Record<string, number>,
+  pressedPlates: string[],
+): DustAnchor[] {
+  const anchors: DustAnchor[] = [];
+  const pressedSet = new Set(pressedPlates);
+
+  // 1. Walkable functional tiles (plates, rotator platforms, elevator platforms, goal beacon)
+  for (const entry of worldNodes.values()) {
+    if (!entry.active) continue;
+    const t = entry.node;
+    if (t.kind === 'plate') {
+      const isPressed = pressedSet.has(t.id);
+      anchors.push({
+        id: `plate_${t.id}`,
+        targetId: t.id,
+        kind: 'plate',
+        position: [entry.wx, entry.wy + 0.14, entry.wz],
+        radius: 0.62,
+        maxHeight: 1.05,
+        count: isPressed ? 5 : 9,
+        pressed: isPressed,
+      });
+    } else if (t.kind === 'rotary') {
+      anchors.push({
+        id: `rot_tile_${t.id}`,
+        targetId: t.groupId ?? t.id,
+        kind: 'rotary',
+        position: [entry.wx, entry.wy + 0.08, entry.wz],
+        radius: 0.74,
+        maxHeight: 0.92,
+        count: 6,
+      });
+    } else if (t.kind === 'elevator') {
+      anchors.push({
+        id: `elev_tile_${t.id}`,
+        targetId: t.groupId ?? t.id,
+        kind: 'elevator',
+        position: [entry.wx, entry.wy + 0.1, entry.wz],
+        radius: 0.72,
+        maxHeight: 1.0,
+        count: 7,
+      });
+    } else if (t.kind === 'goal') {
+      anchors.push({
+        id: `goal_${t.id}`,
+        targetId: t.id,
+        kind: 'goal',
+        position: [entry.wx, entry.wy + 0.16, entry.wz],
+        radius: 0.64,
+        maxHeight: 1.3,
+        count: 10,
+      });
+    }
+  }
+
+  // 2. Directly clickable mechanism handles (rotary cranks, crystals, elevator crystals)
+  for (const m of level.mechanisms) {
+    if (!m.directInteract) continue;
+    const pos = computeMechanismHandlePos(m, mechStates);
+    const kind =
+      m.type === 'rotary'
+        ? 'rotary'
+        : m.type === 'elevator'
+          ? 'elevator'
+          : 'crystal';
+    anchors.push({
+      id: `mech_${m.id}`,
+      targetId: m.id,
+      kind,
+      position: pos,
+      radius: 0.52,
+      maxHeight: 1.05,
+      count: 10,
+    });
+  }
+
+  // 3. Active optical perspective seam points
+  for (const pl of level.perspectiveLinks) {
+    const a = worldNodes.get(pl.nodeA);
+    const b = worldNodes.get(pl.nodeB);
+    if (!a || !b || !a.active || !b.active) continue;
+    anchors.push({
+      id: `persp_a_${pl.id}`,
+      targetId: pl.id,
+      kind: 'perspective',
+      position: [a.wx, a.wy + 0.14, a.wz],
+      radius: 0.48,
+      maxHeight: 0.92,
+      count: 5,
+    });
+    anchors.push({
+      id: `persp_b_${pl.id}`,
+      targetId: pl.id,
+      kind: 'perspective',
+      position: [b.wx, b.wy + 0.14, b.wz],
+      radius: 0.48,
+      maxHeight: 0.92,
+      count: 5,
+    });
+  }
+
+  return anchors;
+}

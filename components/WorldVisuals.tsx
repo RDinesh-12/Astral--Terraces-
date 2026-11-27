@@ -1001,134 +1001,218 @@ export function CrankControl({
 }
 
 // =========================================================================
-// IDLE GUIDANCE PARTICLES (Illuminates Next Functional Mechanism on Idle)
+// FLOATING LIGHT-DUST PARTICLES ON FUNCTIONAL MECHANISMS & INTERACTABLES
 // =========================================================================
 
-const GUIDE_MOTE_PHASES = Array.from({length: 12}, (_, i) => ({
-  angleOffset: (i / 12) * Math.PI * 2,
-  phase: i / 12,
-  radius: 0.42 + (i % 3) * 0.16,
-  isGold: i % 2 === 0,
-}));
-
-export function MechanismGuideParticles({
-  position,
-  kind,
-}: {
+export interface FunctionalDustAnchor {
+  id: string;
+  targetId: string;
+  kind: 'plate' | 'rotary' | 'crystal' | 'elevator' | 'perspective' | 'goal';
   position: [number, number, number];
-  kind: 'plate' | 'mechanism' | 'perspective' | 'goal';
+  radius: number;
+  maxHeight: number;
+  count: number;
+  pressed?: boolean;
+}
+
+const DUST_VERTEX_SHADER = `
+  attribute float aSize;
+  attribute float aAlpha;
+  attribute vec3 aColor;
+  varying float vAlpha;
+  varying vec3 vColor;
+  uniform float uPixelRatio;
+  uniform float uZoom;
+
+  void main() {
+    vAlpha = aAlpha;
+    vColor = aColor;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    float zoomScale = clamp(uZoom / 28.0, 0.55, 1.35);
+    gl_PointSize = clamp(aSize * uPixelRatio * zoomScale, 2.5, 24.0);
+  }
+`;
+
+const DUST_FRAGMENT_SHADER = `
+  varying float vAlpha;
+  varying vec3 vColor;
+
+  void main() {
+    vec2 uv = gl_PointCoord - vec2(0.5);
+    float d = length(uv);
+    float halo = smoothstep(0.5, 0.0, d);
+    float core = smoothstep(0.22, 0.0, d);
+    float intensity = halo * halo * 0.72 + core * 0.58;
+    if (intensity < 0.015) discard;
+    vec3 warmCore = mix(vColor, vec3(1.0, 0.99, 0.93), core * 0.55);
+    gl_FragColor = vec4(warmCore, intensity * vAlpha);
+  }
+`;
+
+const DUST_COLORS: Record<
+  FunctionalDustAnchor['kind'],
+  [string, string]
+> = {
+  plate: ['#8ce3d8', THEME.beaconGold],
+  rotary: ['#f4dc9e', '#d6c2f5'],
+  crystal: ['#8deae0', '#fff0be'],
+  elevator: ['#f6b39b', '#ffe8ab'],
+  perspective: ['#decdfc', '#f7df9c'],
+  goal: [THEME.beaconGold, '#fff7d4'],
+};
+
+export function FunctionalDustField({
+  anchors,
+  idleBoostId = null,
+}: {
+  anchors: FunctionalDustAnchor[];
+  idleBoostId?: string | null;
 }) {
-  const motesRef = useRef<(THREE.Mesh | null)[]>([]);
-  const outerRingRef = useRef<THREE.Mesh>(null);
-  const innerRingRef = useRef<THREE.Mesh>(null);
-  const beamRef = useRef<THREE.Mesh>(null);
+  const dustSystem = useMemo(() => {
+    let total = 0;
+    for (const a of anchors) {
+      const boosted = Boolean(idleBoostId && a.targetId === idleBoostId);
+      total += a.count + (boosted ? 12 : 0);
+    }
+    const safeTotal = Math.max(1, total);
 
-  const primaryColor =
-    kind === 'plate' || kind === 'perspective'
-      ? THEME.turquoise
-      : THEME.beaconGold;
-  const secondaryColor =
-    kind === 'plate' || kind === 'perspective'
-      ? THEME.beaconGold
-      : THEME.turquoise;
+    const positions = new Float32Array(safeTotal * 3);
+    const colors = new Float32Array(safeTotal * 3);
+    const alphas = new Float32Array(safeTotal);
+    const sizes = new Float32Array(safeTotal);
 
-  useFrame(({clock}) => {
+    const meta = new Float32Array(safeTotal * 9);
+    // Stride 9: baseX, baseY, baseZ, radius, maxHeight, phase, driftSpeed, angleOffset, baseAlpha
+
+    const tmpC1 = new THREE.Color();
+    const tmpC2 = new THREE.Color();
+    let ptr = 0;
+
+    for (let ai = 0; ai < anchors.length; ai++) {
+      const a = anchors[ai];
+      const boosted = Boolean(idleBoostId && a.targetId === idleBoostId);
+      const n = a.count + (boosted ? 12 : 0);
+      const [hexA, hexB] = DUST_COLORS[a.kind];
+      tmpC1.set(hexA);
+      tmpC2.set(boosted ? '#fff6c2' : hexB);
+
+      for (let i = 0; i < n; i++) {
+        const seed = ai * 97 + i * 31;
+        const hashA = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
+        const hashB = Math.abs(Math.sin(seed * 78.233 + 1.7) * 24634.6345) % 1;
+        const hashC = Math.abs(Math.sin(seed * 37.719 + 4.2) * 19283.4123) % 1;
+
+        const mixCol = i % 3 === 0 ? tmpC2 : tmpC1;
+        colors[ptr * 3] = mixCol.r;
+        colors[ptr * 3 + 1] = mixCol.g;
+        colors[ptr * 3 + 2] = mixCol.b;
+
+        const radiusFactor = 0.25 + hashA * a.radius;
+        sizes[ptr] = (boosted ? 9.5 : 7.0) + hashB * (boosted ? 7.5 : 5.5);
+
+        const mIdx = ptr * 9;
+        meta[mIdx] = a.position[0];
+        meta[mIdx + 1] = a.position[1];
+        meta[mIdx + 2] = a.position[2];
+        meta[mIdx + 3] = radiusFactor;
+        meta[mIdx + 4] = a.maxHeight + (boosted ? 0.42 : 0);
+        meta[mIdx + 5] = hashC; // initial cycle phase
+        meta[mIdx + 6] = (boosted ? 0.34 : 0.21) + hashB * 0.2; // gentle float speed
+        meta[mIdx + 7] = hashA * Math.PI * 2; // swirl angle
+        meta[mIdx + 8] = boosted ? 0.92 : a.pressed ? 0.42 : 0.7; // base alpha
+
+        positions[ptr * 3] = a.position[0];
+        positions[ptr * 3 + 1] = a.position[1] + 0.1;
+        positions[ptr * 3 + 2] = a.position[2];
+        alphas[ptr] = 0;
+        ptr++;
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(positions, 3);
+    posAttr.setUsage(THREE.DynamicDrawUsage);
+    const alphaAttr = new THREE.BufferAttribute(alphas, 1);
+    alphaAttr.setUsage(THREE.DynamicDrawUsage);
+
+    geometry.setAttribute('position', posAttr);
+    geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('aAlpha', alphaAttr);
+    geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader: DUST_VERTEX_SHADER,
+      fragmentShader: DUST_FRAGMENT_SHADER,
+      uniforms: {
+        uPixelRatio: {value: 1},
+        uZoom: {value: 30},
+      },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    return {geometry, material, posAttr, alphaAttr, meta, count: ptr};
+  }, [anchors, idleBoostId]);
+
+  useEffect(() => {
+    return () => {
+      dustSystem.geometry.dispose();
+      dustSystem.material.dispose();
+    };
+  }, [dustSystem]);
+
+  useFrame(({clock, camera, gl}) => {
+    if (dustSystem.count === 0) return;
     const t = clock.getElapsedTime();
+    const posArr = dustSystem.posAttr.array as Float32Array;
+    const alphaArr = dustSystem.alphaAttr.array as Float32Array;
+    const meta = dustSystem.meta;
 
-    for (let i = 0; i < GUIDE_MOTE_PHASES.length; i++) {
-      const m = motesRef.current[i];
-      if (!m) continue;
-      const cfg = GUIDE_MOTE_PHASES[i];
-      const prog = (t * 0.62 + cfg.phase) % 1;
-      const angle = cfg.angleOffset + t * 2.1;
-      const spread = cfg.radius * (1 - prog * 0.35);
-      m.position.set(
-        Math.cos(angle) * spread,
-        0.12 + prog * 2.15,
-        Math.sin(angle) * spread,
-      );
-      const fadeScale = Math.sin(prog * Math.PI) * 1.15;
-      m.scale.setScalar(Math.max(0.01, fadeScale));
-      m.rotation.y = t * 2.4 + i;
-      m.rotation.x = t * 1.6;
+    dustSystem.material.uniforms.uPixelRatio.value = Math.min(
+      2,
+      gl.getPixelRatio() || 1,
+    );
+    if (camera instanceof THREE.OrthographicCamera) {
+      dustSystem.material.uniforms.uZoom.value = camera.zoom;
     }
 
-    if (outerRingRef.current) {
-      const pulse = 1 + Math.sin(t * 3.4) * 0.16;
-      outerRingRef.current.scale.set(pulse, pulse, 1);
-      outerRingRef.current.rotation.z = t * 0.9;
+    for (let i = 0; i < dustSystem.count; i++) {
+      const m = i * 9;
+      const bx = meta[m];
+      const by = meta[m + 1];
+      const bz = meta[m + 2];
+      const r = meta[m + 3];
+      const maxH = meta[m + 4];
+      const phase = meta[m + 5];
+      const speed = meta[m + 6];
+      const angle0 = meta[m + 7];
+      const baseAlpha = meta[m + 8];
+
+      const cycle = (t * speed + phase) % 1;
+      const swayAngle = angle0 + t * 0.55 + Math.sin(t * 0.9 + phase * 6.28) * 0.4;
+      const pIdx = i * 3;
+      posArr[pIdx] = bx + Math.cos(swayAngle) * r * (0.82 + 0.18 * Math.sin(cycle * Math.PI));
+      posArr[pIdx + 1] = by + cycle * maxH;
+      posArr[pIdx + 2] = bz + Math.sin(swayAngle) * r * (0.82 + 0.18 * Math.cos(cycle * Math.PI));
+
+      const envelope = Math.sin(cycle * Math.PI);
+      const twinkle = 0.72 + 0.28 * Math.sin(t * 4.5 + phase * 18.0);
+      alphaArr[i] = baseAlpha * envelope * twinkle;
     }
 
-    if (innerRingRef.current) {
-      const pulse2 = 1 + Math.cos(t * 4.2) * 0.12;
-      innerRingRef.current.scale.set(pulse2, pulse2, 1);
-    }
-
-    if (beamRef.current) {
-      const mat = beamRef.current.material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.14 + Math.sin(t * 3.2) * 0.06;
-    }
+    dustSystem.posAttr.needsUpdate = true;
+    dustSystem.alphaAttr.needsUpdate = true;
   });
 
+  if (dustSystem.count === 0) return null;
+
   return (
-    <group position={position}>
-      {/* Soft shimmering vertical spire beacon */}
-      <mesh ref={beamRef} position={[0, 1.1, 0]}>
-        <cylinderGeometry args={[0.18, 0.56, 2.2, 12, 1, true]} />
-        <meshBasicMaterial
-          color={primaryColor}
-          transparent
-          opacity={0.18}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* Dual pulsing guide rings */}
-      <mesh
-        ref={outerRingRef}
-        position={[0, 0.06, 0]}
-        rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.72, 0.92, 24]} />
-        <meshBasicMaterial
-          color={primaryColor}
-          transparent
-          opacity={0.85}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <mesh
-        ref={innerRingRef}
-        position={[0, 0.08, 0]}
-        rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.36, 0.48, 20]} />
-        <meshBasicMaterial
-          color={secondaryColor}
-          transparent
-          opacity={0.9}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* Rising spiraling starlight motes */}
-      {GUIDE_MOTE_PHASES.map((cfg, idx) => (
-        <mesh
-          key={idx}
-          ref={(el) => {
-            motesRef.current[idx] = el;
-          }}>
-          <octahedronGeometry args={[0.095, 0]} />
-          <meshStandardMaterial
-            color={cfg.isGold ? THEME.beaconGold : THEME.turquoise}
-            emissive={cfg.isGold ? THEME.beaconGold : THEME.turquoise}
-            emissiveIntensity={2.2}
-            roughness={0.15}
-          />
-        </mesh>
-      ))}
-    </group>
+    <points
+      geometry={dustSystem.geometry}
+      material={dustSystem.material}
+      frustumCulled={false}
+    />
   );
 }
 

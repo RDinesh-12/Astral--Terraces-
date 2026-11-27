@@ -271,7 +271,7 @@ function SaveStatusBadge({
       aria-live="polite"
       data-testid="save-status"
       className={`fixed pointer-events-none z-50 px-2.5 py-1 rounded-full border text-[11px] font-semibold shadow-md flex items-center gap-1.5 transition-opacity ${
-        isMobile ? 'right-3 top-14' : 'left-3 bottom-3'
+        isMobile ? 'left-1/2 -translate-x-1/2 bottom-3' : 'left-3 bottom-3'
       } ${styleMap[status]}`}>
       <span
         className={`w-1.5 h-1.5 rounded-full ${
@@ -1132,16 +1132,6 @@ export default function App() {
                 ✦ Optical Pathway Aligned
               </div>
             )}
-
-            {hudInfo.idleHintLabel &&
-              !hudInfo.statusBanner &&
-              !hudInfo.blockedFeedback && (
-                <div
-                  data-testid="idle-mechanism-hint"
-                  className="px-2.5 py-0.5 rounded-full bg-[#231f3b]/88 border border-[#f2d388]/65 text-[10px] sm:text-[11px] font-semibold text-[#f2d388] shadow animate-pulse text-center">
-                  ✨ Next Step: {hudInfo.idleHintLabel}
-                </div>
-              )}
 
             {hudInfo.hasPerspectiveLinks &&
               !hudInfo.perspectiveAligned &&

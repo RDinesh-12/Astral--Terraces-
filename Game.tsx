@@ -20,7 +20,7 @@ import * as THREE from 'three';
 import {
   ArchProp,
   CrankControl,
-  MechanismGuideParticles,
+  FunctionalDustField,
   PastelEnvironment,
   PerspectiveSeam,
   StarRelicMesh,
@@ -37,6 +37,7 @@ import {
   evaluateLevelNodes,
   findNextHintTarget,
   findPathBFS,
+  getLevelDustAnchors,
   LEVELS,
   resolveMechanismTrigger,
 } from './levels';
@@ -956,6 +957,19 @@ function Scene({
     [level, currentNodeTrack, mechStates, camAngle, pressedPlates],
   );
 
+  // Collect all functional anchors across the level for floating light-dust particles
+  const dustAnchors = useMemo(
+    () => getLevelDustAnchors(level, worldNodes, mechStates, pressedPlates),
+    [level, worldNodes, mechStates, pressedPlates],
+  );
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.dataset.idleActive = isPlayerIdle ? 'true' : 'false';
+    el.dataset.dustAnchors = String(dustAnchors.length);
+  }, [containerRef, isPlayerIdle, dustAnchors.length]);
+
   // Sync discrete HUD info up to App.tsx
   const perspectiveAligned = level.perspectiveLinks.some((pl) =>
     pl.alignedAngles.includes(camAngle),
@@ -1571,12 +1585,14 @@ function Scene({
         />
       ))}
 
-      {isPlayerIdle && nextHintTarget && !celebrating && (
-        <MechanismGuideParticles
-          position={nextHintTarget.position}
-          kind={nextHintTarget.kind}
-        />
-      )}
+      <FunctionalDustField
+        anchors={dustAnchors}
+        idleBoostId={
+          isPlayerIdle && !celebrating && nextHintTarget
+            ? nextHintTarget.targetId
+            : null
+        }
+      />
 
       <RigidBody
         ref={playerBodyRef}

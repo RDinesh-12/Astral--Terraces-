@@ -6,6 +6,7 @@ import {
   computeOpticalSeamEdges,
   evaluateLevelNodes,
   findNextHintTarget,
+  getLevelDustAnchors,
   LEVELS,
   resolveMechanismTrigger,
 } from '../levels';
@@ -323,4 +324,60 @@ test('idle guidance solver resolves a valid next functional target across all 10
   assert.equal(lvl1Hint0?.kind, 'plate');
   const lvl1Hint1 = findNextHintTarget(lvl1, 'l1_plate', {l1_gate_bridge: 1, l1_gate_relic: 1}, lvl1.defaultCamAngle, ['l1_plate']);
   assert.equal(lvl1Hint1?.kind, 'goal');
+});
+
+test('functional floating dust anchors cover plates, rotators, handles, perspective links, and goals across all 10 levels', () => {
+  for (const level of LEVELS) {
+    const initStates: Record<string, number> = {};
+    for (const m of level.mechanisms) {
+      initStates[m.id] = m.initialState;
+    }
+    const worldNodes = evaluateLevelNodes(level, initStates);
+    const anchors = getLevelDustAnchors(level, worldNodes, initStates, []);
+
+    assert.ok(anchors.length >= 2, `Level ${level.levelNumber} missing functional dust anchors`);
+
+    const directCount = level.mechanisms.filter((m) => m.directInteract).length;
+    const activeRotaryElevCount = level.tiles.filter(
+      (t) =>
+        (t.kind === 'rotary' || t.kind === 'elevator') &&
+        worldNodes.get(t.id)?.active,
+    ).length;
+    const activePlateCount = level.tiles.filter(
+      (t) => t.kind === 'plate' && worldNodes.get(t.id)?.active,
+    ).length;
+
+    assert.ok(
+      anchors.filter((a) => a.id.startsWith('mech_')).length === directCount,
+      `Level ${level.levelNumber} direct mechanism handle dust mismatch`,
+    );
+    assert.ok(
+      anchors.filter((a) => a.id.startsWith('rot_tile_') || a.id.startsWith('elev_tile_')).length === activeRotaryElevCount,
+      `Level ${level.levelNumber} rotary/elevator platform dust mismatch`,
+    );
+    assert.ok(
+      anchors.filter((a) => a.kind === 'plate').length === activePlateCount,
+      `Level ${level.levelNumber} plate dust mismatch`,
+    );
+    assert.ok(
+      anchors.some((a) => a.kind === 'goal'),
+      `Level ${level.levelNumber} missing goal dust anchor`,
+    );
+
+    for (const a of anchors) {
+      assert.ok(
+        a.position.every((n) => Number.isFinite(n)) && a.count > 0,
+        `Invalid dust anchor ${a.id} on Level ${level.levelNumber}`,
+      );
+    }
+  }
+
+  // Verify Level 2 rotator platform dust anchors track world rotation dynamically
+  const lvl2 = LEVELS[1];
+  const l2Rot0 = getLevelDustAnchors(lvl2, evaluateLevelNodes(lvl2, {l2_rot_1: 0, l2_gate_north: 0}), {l2_rot_1: 0, l2_gate_north: 0}, []);
+  const l2Rot1 = getLevelDustAnchors(lvl2, evaluateLevelNodes(lvl2, {l2_rot_1: 1, l2_gate_north: 0}), {l2_rot_1: 1, l2_gate_north: 0}, []);
+  const rw0 = l2Rot0.find((a) => a.id === 'rot_tile_l2_rw');
+  const rw1 = l2Rot1.find((a) => a.id === 'rot_tile_l2_rw');
+  assert.ok(rw0 && rw1);
+  assert.notDeepEqual(rw0.position, rw1.position, 'Rotator platform dust must move when rotated');
 });
