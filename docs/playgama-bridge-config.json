@@ -1,0 +1,24 @@
+{
+  "gameVersion": "1.1.5",
+  "sendAnalyticsEvents": true,
+  "game": {
+    "adaptToSafeArea": true
+  },
+  "advertisement": {
+    "minimumDelayBetweenInterstitial": 60,
+    "interstitial": {
+      "preloadOnStart": "level_transition",
+      "placementFallback": "level_transition"
+    },
+    "rewarded": {
+      "preloadOnStart": "hint_reward",
+      "placementFallback": "hint_reward"
+    }
+  },
+  "leaderboards": [
+    {
+      "id": "main_leaderboard",
+      "isMain": true
+    }
+  ]
+}

@@ -20,6 +20,7 @@ import * as THREE from 'three';
 import {
   ArchProp,
   CrankControl,
+  MechanismGuideParticles,
   PastelEnvironment,
   PerspectiveSeam,
   StarRelicMesh,
@@ -34,6 +35,7 @@ import {
   buildWalkableGraph,
   computeOpticalSeamEdges,
   evaluateLevelNodes,
+  findNextHintTarget,
   findPathBFS,
   LEVELS,
   resolveMechanismTrigger,
@@ -264,11 +266,14 @@ function ResponsiveOrthoCamera({fitRadius}: {fitRadius: number}) {
       const w = Math.max(240, size.width);
       const h = Math.max(240, size.height);
       const isPortrait = h > w;
-      const worldSpanW = fitRadius * (isPortrait ? 1.88 : 2.18);
-      const worldSpanH = fitRadius * (isPortrait ? 2.18 : 1.78);
+      const isCompactViewport = w < 640 || h < 500;
+      const worldSpanW =
+        fitRadius * (isPortrait ? 2.18 : isCompactViewport ? 2.35 : 2.18);
+      const worldSpanH =
+        fitRadius * (isPortrait ? 2.52 : isCompactViewport ? 2.1 : 1.78);
       const zoomX = w / worldSpanW;
       const zoomY = h / worldSpanH;
-      camera.zoom = Math.max(13, Math.min(54, Math.min(zoomX, zoomY)));
+      camera.zoom = Math.max(10, Math.min(54, Math.min(zoomX, zoomY)));
       camera.updateProjectionMatrix();
     }
   }, [camera, size.width, size.height, fitRadius]);
@@ -414,6 +419,10 @@ function Scene({
   const [crankDragOffsets, setCrankDragOffsets] = useState<
     Record<string, number>
   >({});
+  const [currentNodeTrack, setCurrentNodeTrack] = useState<string>(
+    () => bootResolved.startNodeId,
+  );
+  const [isPlayerIdle, setIsPlayerIdle] = useState(false);
 
   // Refs synced for frame-rate-independent imperative locomotion
   const mechStatesRef = useRef(mechStates);
@@ -428,6 +437,22 @@ function Scene({
   pathQueueRef.current = pathQueue;
   const celebratingRef = useRef(celebrating);
   celebratingRef.current = celebrating;
+  const interactingAnimRef = useRef(interactingAnim);
+  interactingAnimRef.current = interactingAnim;
+  const isPlayerIdleRef = useRef(isPlayerIdle);
+  isPlayerIdleRef.current = isPlayerIdle;
+  const lastInputAtRef = useRef<number>(
+    typeof performance !== 'undefined' ? performance.now() : Date.now(),
+  );
+
+  const markPlayerActive = useCallback(() => {
+    lastInputAtRef.current =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (isPlayerIdleRef.current) {
+      isPlayerIdleRef.current = false;
+      setIsPlayerIdle(false);
+    }
+  }, []);
 
   // Traveler & camera imperative refs
   const playerVisualRef = useRef<THREE.Group>(null);
@@ -574,6 +599,7 @@ function Scene({
       deltaSteps = 1,
       overridePlates?: string[],
     ) => {
+      markPlayerActive();
       const occupiedNodeIds = [navRef.current.currentNodeId];
       if (navRef.current.targetNodeId) {
         occupiedNodeIds.push(navRef.current.targetNodeId);
@@ -630,6 +656,7 @@ function Scene({
   // Snap / set camera quadrant and notify if an optical illusion just formed
   const applyCamAngle = useCallback(
     (nextAngle: number) => {
+      markPlayerActive();
       const normalized = ((nextAngle % 4) + 4) % 4;
       setCamAngle(normalized);
       const aligned = level.perspectiveLinks.some((pl) =>
@@ -693,6 +720,7 @@ function Scene({
 
     const onPointerDown = (e: PointerEvent) => {
       if (gameStateRef.current.status !== 'PLAYING' || paused) return;
+      markPlayerActive();
       if (crankDragRef.current) return;
       if (camOrbitRef.current.dragActive) return;
 
@@ -886,6 +914,7 @@ function Scene({
       ) {
         return;
       }
+      markPlayerActive();
       const startId =
         navRef.current.targetNodeId ?? navRef.current.currentNodeId;
       const path = findPathBFS(walkableGraphRef.current, startId, tileId);
@@ -905,6 +934,26 @@ function Scene({
       }
     },
     [gameStateRef, paused, level.perspectiveLinks.length, flashBlocked],
+  );
+
+  // Reset idle timer whenever gameplay resumes or unpauses
+  useEffect(() => {
+    if (!paused && gameState.status === 'PLAYING') {
+      markPlayerActive();
+    }
+  }, [paused, gameState.status, markPlayerActive]);
+
+  // Identify next functional mechanism/plate/perspective/goal to illuminate on idle
+  const nextHintTarget = useMemo(
+    () =>
+      findNextHintTarget(
+        level,
+        currentNodeTrack,
+        mechStates,
+        camAngle,
+        pressedPlates,
+      ),
+    [level, currentNodeTrack, mechStates, camAngle, pressedPlates],
   );
 
   // Sync discrete HUD info up to App.tsx
@@ -929,6 +978,7 @@ function Scene({
       hasPerspectiveLinks: level.perspectiveLinks.length > 0,
       canInteractNearby: Boolean(nearby),
       nearbyLabel: nearby?.label ?? '',
+      idleHintLabel: isPlayerIdle && nextHintTarget ? nextHintTarget.label : '',
       statusBanner,
       blockedFeedback,
     });
@@ -938,6 +988,8 @@ function Scene({
     camAngle,
     isDraggingCamera,
     perspectiveAligned,
+    isPlayerIdle,
+    nextHintTarget,
     statusBanner,
     blockedFeedback,
     mechStates,
@@ -1148,6 +1200,10 @@ function Scene({
     }
     const hasDirInput = Math.hypot(moveX, moveZ) > 0.2;
 
+    if (hasDirInput || camOrbitRef.current.dragging) {
+      markPlayerActive();
+    }
+
     if (hasDirInput && !nav.targetNodeId && pathQueueRef.current.length === 0) {
       camera.getWorldDirection(tmpCamForward);
       tmpCamForward.y = 0;
@@ -1288,6 +1344,7 @@ function Scene({
           nav.currentNodeId = arrivedId;
           nav.targetNodeId = null;
           nav.segmentProgress = 0;
+          setCurrentNodeTrack(arrivedId);
           onArriveNode(arrivedId);
         } else {
           walkingNow = true;
@@ -1322,6 +1379,23 @@ function Scene({
     if (walkingNow !== isWalkingRef.current) {
       isWalkingRef.current = walkingNow;
       setIsWalking(walkingNow);
+    }
+
+    if (walkingNow) {
+      markPlayerActive();
+    } else {
+      const nowMs =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const idleNow =
+        !paused &&
+        gameStateRef.current.status === 'PLAYING' &&
+        !celebratingRef.current &&
+        !interactingAnimRef.current &&
+        nowMs - lastInputAtRef.current >= 4000;
+      if (idleNow !== isPlayerIdleRef.current) {
+        isPlayerIdleRef.current = idleNow;
+        setIsPlayerIdle(idleNow);
+      }
     }
 
     if (playerVisualRef.current) {
@@ -1497,6 +1571,13 @@ function Scene({
         />
       ))}
 
+      {isPlayerIdle && nextHintTarget && !celebrating && (
+        <MechanismGuideParticles
+          position={nextHintTarget.position}
+          kind={nextHintTarget.kind}
+        />
+      )}
+
       <RigidBody
         ref={playerBodyRef}
         type="kinematicPosition"
@@ -1512,6 +1593,7 @@ function Scene({
           walking={isWalking}
           celebrating={celebrating}
           interacting={interactingAnim}
+          idleEmote={isPlayerIdle && !isWalking && !celebrating && !interactingAnim}
           tunicColor={cosmetic.tunicColor}
           scarfColor={cosmetic.scarfColor}
           capColor={cosmetic.capColor}

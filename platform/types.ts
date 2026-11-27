@@ -1,9 +1,16 @@
+import type {PlaygamaBridge} from '@playgama/bridge';
+
 /**
  * Unified Platform Bridge Types for Astral Terraces
- * Covers YouTube Playables, Facebook Instant Games, Google Playground, and Standalone Web.
+ * Covers Playgama Bridge, YouTube Playables, Facebook Instant Games, Google Playground, and Standalone Web.
  */
 
-export type PlatformType = 'youtube' | 'facebook' | 'playground' | 'standalone';
+export type PlatformType =
+  | 'playgama'
+  | 'youtube'
+  | 'facebook'
+  | 'playground'
+  | 'standalone';
 
 export interface PlatformUser {
   id: string;
@@ -34,6 +41,10 @@ export interface PlatformSavePayload {
 // Global declaration augmentations for platform SDKs
 declare global {
   interface Window {
+    // Playgama Bridge SDK v2
+    bridge?: PlaygamaBridge;
+    __playgamaInitPromise?: Promise<void>;
+
     // YouTube Playables SDK interface
     YTPlayables?: {
       onFirstFrameReady?: () => void;

@@ -1209,8 +1209,14 @@ function computeIsMobile(): boolean {
   const coarsePointer =
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(pointer: coarse)').matches;
-  const small = window.innerWidth < MOBILE_MAX_WIDTH_PX;
-  return ua || isIpadOs || coarsePointer || small;
+  const smallPortrait =
+    window.innerWidth < MOBILE_MAX_WIDTH_PX ||
+    (navigator.maxTouchPoints > 0 &&
+      typeof window.screen?.width === 'number' &&
+      window.screen.width > 0 &&
+      window.screen.width < MOBILE_MAX_WIDTH_PX);
+  const smallLandscape = window.innerHeight < 500 && window.innerWidth < 960;
+  return ua || isIpadOs || coarsePointer || smallPortrait || smallLandscape;
 }
 
 /**

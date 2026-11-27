@@ -19,17 +19,18 @@ import {
   StartMenuOverlay,
 } from './components/GameOverlays';
 import {getConfig, THEME, TOTAL_LEVELS} from './constants';
-import {Game, type GameCommandBridge} from './Game';
+import type {GameCommandBridge} from './Game';
 import {createInitialInputSnapshot, type InputSnapshot} from './input';
 import {LEVELS} from './levels';
-import {runFullQaAudit} from './qa/geometryValidator';
 import {
   clearSaveData,
   computeTotalBestScore,
   countTotalCollectedRelics,
   getCosmeticById,
   loadSaveResult,
+  parseAndSanitizeSaveData,
   persistSaveData,
+  SAVE_STORAGE_KEY,
 } from './saveSystem';
 import {
   ActiveLevelCheckpoint,
@@ -38,13 +39,17 @@ import {
   SaveStatusState,
 } from './types';
 import {platformBridge} from './platform/platformBridge';
-import {gameAudio} from './utils';
 import BackgroundMusic from './utils/BackgroundMusic';
 import {
+  gameAudio,
   GameState,
   MenuOverlay,
   useIsMobile,
 } from './utils/helper';
+
+const LazyGame = React.lazy(() =>
+  import('./Game').then((m) => ({default: m.Game})),
+);
 import {
   usePlayground,
   usePlaygroundGameLifecycle,
@@ -66,14 +71,14 @@ const DEFAULT_HUD_INFO: LevelHudInfo = {
   hasPerspectiveLinks: false,
   canInteractNearby: false,
   nearbyLabel: '',
+  idleHintLabel: '',
   statusBanner: '',
   blockedFeedback: '',
 };
 
 /**
- * Compact mobile touch controls (bottom-left D-Pad + bottom-right ACT / Orbit).
- * Uniform 48x48px buttons, safe-area inset >= 32px (left-8 / right-8), and
- * pointer-events-auto strictly on buttons so the 3D canvas remains draggable/tappable.
+ * Compact mobile touch controls (bottom-left D-Pad + bottom-right Orbit & ACT cluster).
+ * Responsive safe-area insets and >= 44px touch targets avoid horizontal overlap down to 320px width.
  */
 function MobileControls({
   inputRef,
@@ -109,15 +114,20 @@ function MobileControls({
   }, [releaseAll]);
 
   const dpadBtnClass =
-    'w-12 h-12 min-w-[48px] min-h-[48px] rounded-xl bg-[#231f3b]/85 active:bg-[#a498cc] border border-[#b4a7db]/50 text-[#f3ece1] font-bold text-sm flex items-center justify-center shadow-lg pointer-events-auto touch-none select-none transition-colors';
+    'w-11 h-11 min-w-[44px] min-h-[44px] sm:w-12 sm:h-12 rounded-xl bg-[#231f3b]/88 active:bg-[#a498cc] border border-[#b4a7db]/50 text-[#f3ece1] font-bold text-sm flex items-center justify-center shadow-lg pointer-events-auto touch-none select-none transition-colors';
 
   const actionBtnClass =
-    'w-12 h-12 min-w-[48px] min-h-[48px] rounded-full bg-[#231f3b]/85 active:bg-[#e0917a] border border-[#e0917a]/60 text-[#f3ece1] font-bold text-xs flex items-center justify-center shadow-lg pointer-events-auto touch-none select-none transition-colors';
+    'w-11 h-11 min-w-[44px] min-h-[44px] sm:w-12 sm:h-12 rounded-full bg-[#231f3b]/88 active:bg-[#e0917a] border border-[#e0917a]/60 text-[#f3ece1] font-bold text-xs flex items-center justify-center shadow-lg pointer-events-auto touch-none select-none transition-colors';
 
   return (
     <div className="absolute inset-0 pointer-events-none z-20 select-none">
-      {/* Bottom-left D-Pad (safe >=32px margin from left edge) */}
-      <div className="absolute left-8 bottom-6 grid grid-cols-3 gap-1.5 pointer-events-none">
+      {/* Bottom-left D-Pad with safe-area padding */}
+      <div
+        className="absolute grid grid-cols-3 gap-1 sm:gap-1.5 pointer-events-none"
+        style={{
+          left: 'max(0.75rem, env(safe-area-inset-left))',
+          bottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+        }}>
         <div />
         <button
           type="button"
@@ -182,18 +192,35 @@ function MobileControls({
         </button>
       </div>
 
-      {/* Bottom-right Camera Orbit & Interact Cluster (uniform 48x48px buttons) */}
-      <div className="absolute right-8 bottom-6 flex items-center gap-2 pointer-events-none">
-        <button
-          type="button"
-          aria-label="Orbit Camera Left"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onRotateCam(-1);
-          }}
-          className={actionBtnClass}>
-          ↶
-        </button>
+      {/* Bottom-right Compact L-Cluster (Orbit buttons stacked cleanly above Interact on narrow screens) */}
+      <div
+        className="absolute flex flex-col sm:flex-row items-end sm:items-center gap-1.5 sm:gap-2 pointer-events-none"
+        style={{
+          right: 'max(0.75rem, env(safe-area-inset-right))',
+          bottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+        }}>
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            aria-label="Orbit Camera Left"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onRotateCam(-1);
+            }}
+            className={actionBtnClass}>
+            ↶
+          </button>
+          <button
+            type="button"
+            aria-label="Orbit Camera Right"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onRotateCam(1);
+            }}
+            className={actionBtnClass}>
+            ↷
+          </button>
+        </div>
         <button
           type="button"
           aria-label="Interact"
@@ -202,22 +229,12 @@ function MobileControls({
             e.stopPropagation();
             onInteract();
           }}
-          className={`w-12 h-12 min-w-[48px] min-h-[48px] rounded-full font-bold text-xs flex items-center justify-center shadow-lg pointer-events-auto touch-none select-none transition-colors border ${
+          className={`w-14 h-12 min-w-[52px] min-h-[48px] sm:w-12 sm:h-12 rounded-full font-bold text-xs flex items-center justify-center shadow-lg pointer-events-auto touch-none select-none transition-colors border ${
             canInteract
               ? 'bg-[#e0917a] text-[#231f3b] border-[#fff3d1] animate-pulse'
-              : 'bg-[#231f3b]/85 text-[#f3ece1] border-[#7ebdb6]/60'
+              : 'bg-[#231f3b]/88 text-[#f3ece1] border-[#7ebdb6]/60'
           }`}>
           ACT
-        </button>
-        <button
-          type="button"
-          aria-label="Orbit Camera Right"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onRotateCam(1);
-          }}
-          className={actionBtnClass}>
-          ↷
         </button>
       </div>
     </div>
@@ -271,8 +288,10 @@ function SaveStatusBadge({
 }
 
 export default function App() {
-  // --- PLAYGROUND SDK INTEGRATION ---
-  const {sdk, isReady} = usePlayground();
+  // --- PLAYGROUND SDK INTEGRATION (disabled when Playgama Bridge is active) ---
+  const isPlaygamaRuntime =
+    typeof window !== 'undefined' && typeof window.bridge !== 'undefined';
+  const {sdk, isReady} = usePlayground({enabled: !isPlaygamaRuntime});
   const [exitChat] = useRpc<Record<string, unknown>, void>('ExitChat');
   const isMobile = useIsMobile();
   const sharedInputRef = useRef<InputSnapshot>(createInitialInputSnapshot());
@@ -328,11 +347,19 @@ export default function App() {
   }, []);
 
   const updateSaveData = useCallback(
-    (updater: (prev: SaveData) => SaveData) => {
+    (updater: (prev: SaveData) => SaveData, immediateCloud = false) => {
       showSaveStatus('saving');
       setSaveData((prev) => {
         const next = updater(prev);
         const res = persistSaveData(next);
+        if (platformBridge.hasPlaygamaBridge()) {
+          queueMicrotask(() => {
+            platformBridge.savePlatformData(
+              {[SAVE_STORAGE_KEY]: next},
+              immediateCloud,
+            );
+          });
+        }
         showSaveStatus(res.ok ? 'saved' : 'error');
         return next;
       });
@@ -340,17 +367,28 @@ export default function App() {
     [showSaveStatus],
   );
 
-  // Run automated 10-level geometry, collision & navigation QA audit on startup
+  // Run automated 10-level geometry, collision & navigation QA audit asynchronously after boot
   useEffect(() => {
-    const report = runFullQaAudit();
-    (window as unknown as Record<string, unknown>).__astralQaReport = report;
-    if (!report.allPassed) {
-      console.error('[Astral Terraces QA Audit] Failures detected:', report);
-    } else {
-      console.info(
-        `[Astral Terraces QA Audit] All ${report.levels.length} levels passed.`,
-      );
-    }
+    const timer = window.setTimeout(() => {
+      import('./qa/geometryValidator')
+        .then(({runFullQaAudit}) => {
+          const report = runFullQaAudit();
+          (window as unknown as Record<string, unknown>).__astralQaReport =
+            report;
+          if (!report.allPassed) {
+            console.error(
+              '[Astral Terraces QA Audit] Failures detected:',
+              report,
+            );
+          } else {
+            console.info(
+              `[Astral Terraces QA Audit] All ${report.levels.length} levels passed.`,
+            );
+          }
+        })
+        .catch(() => {});
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, []);
 
   // Sync audio mute state from saved settings on mount
@@ -402,6 +440,16 @@ export default function App() {
   const [gameKey, setGameKey] = useState(0);
   const [hudInfo, setHudInfo] = useState<LevelHudInfo>(DEFAULT_HUD_INFO);
   const [isGameMenuOpen, setIsGameMenuOpen] = useState(false);
+  const [isPlatformPaused, setIsPlatformPaused] = useState(() =>
+    platformBridge.isHostPaused(),
+  );
+  const [isHostAudioMuted, setIsHostAudioMuted] = useState(() =>
+    platformBridge.isHostMuted(),
+  );
+  const [isRewardedSupported, setIsRewardedSupported] = useState(() =>
+    platformBridge.isRewardedAdSupported(),
+  );
+  const isShowingAdRef = useRef(false);
   const [activeSubModal, setActiveSubModal] = useState<
     | 'none'
     | 'levels'
@@ -430,7 +478,11 @@ export default function App() {
     const canHandleBackKey = ['PLAYING', 'PAUSED'].includes(gameState.status);
     (window as unknown as Record<string, unknown>).canHandleBackKey =
       canHandleBackKey;
-    if (window.parent && window.parent !== window) {
+    if (
+      !isPlaygamaRuntime &&
+      window.parent &&
+      window.parent !== window
+    ) {
       window.parent.postMessage(
         {
           type: 'PLAYGROUND_CAN_HANDLE_BACK_KEY',
@@ -439,7 +491,7 @@ export default function App() {
         '*',
       );
     }
-  }, [gameState.status]);
+  }, [gameState.status, isPlaygamaRuntime]);
 
   // Flush live checkpoint snapshot synchronously to localStorage
   const flushCheckpointNow = useCallback(() => {
@@ -534,6 +586,7 @@ export default function App() {
       if (sdk) {
         sdk.startGame();
       }
+      platformBridge.reportLevelEvent('level_started', clampedLevel);
     },
     [sdk, updateSaveData],
   );
@@ -559,47 +612,102 @@ export default function App() {
     }
   }, [startRun, persistenceEnabled]);
 
-  const resetGame = useCallback(() => {
+  const showTransitionInterstitial = useCallback(async (placement: string) => {
+    if (!platformBridge.hasPlaygamaBridge() || isShowingAdRef.current) return;
+    isShowingAdRef.current = true;
+    try {
+      await platformBridge.showInterstitial(placement);
+    } finally {
+      isShowingAdRef.current = false;
+    }
+  }, []);
+
+  const resetGame = useCallback(async () => {
+    if (isShowingAdRef.current) return;
+    await showTransitionInterstitial('play_again');
     startRun(1, computeTotalBestScore(saveDataRef.current), {
       clearCheckpoint: true,
     });
-  }, [startRun]);
+  }, [showTransitionInterstitial, startRun]);
 
-  const handleConfirmResetProgress = useCallback(() => {
+  const handleConfirmResetProgress = useCallback(async () => {
+    if (isShowingAdRef.current) return;
+    await showTransitionInterstitial('reset_progress');
     const fresh = clearSaveData(saveDataRef.current.profile);
     setSaveData(fresh);
     showSaveStatus('saved');
     setActiveSubModal('none');
+    setIsGameMenuOpen(false);
     if (gameStateRef.current.status === 'PLAYING') {
       startRun(1, 0, {clearCheckpoint: true});
     } else {
       setGameState({status: 'START', score: 0, level: 1});
     }
-  }, [startRun, showSaveStatus]);
+  }, [showTransitionInterstitial, startRun, showSaveStatus]);
 
-  const handleRestartLevel = useCallback(() => {
+  const handleRestartLevel = useCallback(async () => {
+    if (isShowingAdRef.current) return;
     gameAudio.playCrispClick();
+    await showTransitionInterstitial('restart_level');
     setIsGameMenuOpen(false);
     setActiveSubModal('none');
     startRun(gameStateRef.current.level, levelStartScoreRef.current, {
       clearCheckpoint: true,
     });
-  }, [startRun]);
+  }, [showTransitionInterstitial, startRun]);
 
-  const handleNextLevel = useCallback(() => {
+  const handleNextLevel = useCallback(async () => {
+    if (isShowingAdRef.current) return;
     gameAudio.playCrispClick();
+    await showTransitionInterstitial('next_level');
     const nextLevel = Math.min(TOTAL_LEVELS, gameStateRef.current.level + 1);
     startRun(nextLevel, gameStateRef.current.score, {clearCheckpoint: true});
-  }, [startRun]);
+  }, [showTransitionInterstitial, startRun]);
 
-  const handleQuitToMenu = useCallback(() => {
+  const handleQuitToMenu = useCallback(async () => {
+    if (isShowingAdRef.current) return;
     gameAudio.playCrispClick();
     flushCheckpointNow();
+    await showTransitionInterstitial('return_to_menu');
     setIsGameMenuOpen(false);
     setActiveSubModal('none');
     setShowHint(false);
     setGameState((prev) => ({...prev, status: 'START'}));
-  }, [flushCheckpointNow]);
+  }, [flushCheckpointNow, showTransitionInterstitial]);
+
+  const handleSelectLevel = useCallback(
+    async (lvl: number) => {
+      if (isShowingAdRef.current) return;
+      await showTransitionInterstitial('select_level');
+      const saved = saveDataRef.current;
+      const scoreForLevel =
+        saved.checkpoint?.levelNumber === lvl
+          ? saved.checkpoint.scoreAtLevel
+          : computeTotalBestScore(saved);
+      startRun(lvl, scoreForLevel);
+    },
+    [showTransitionInterstitial, startRun],
+  );
+
+  const handleUnlockLevelWithAd = useCallback(
+    async (lvl: number) => {
+      if (isShowingAdRef.current) return;
+      isShowingAdRef.current = true;
+      try {
+        const earned = await platformBridge.showRewarded('unlock_world');
+        if (!earned) return;
+        updateSaveData((prev) => ({
+          ...prev,
+          highestUnlockedLevel: Math.max(prev.highestUnlockedLevel, lvl),
+        }));
+        gameAudio.playConfirmSelect();
+        startRun(lvl, computeTotalBestScore(saveDataRef.current));
+      } finally {
+        isShowingAdRef.current = false;
+      }
+    },
+    [startRun, updateSaveData],
+  );
 
   // Save checkpoint snapshot on discrete puzzle mechanism / tile / camera updates
   const handleCheckpointUpdate = useCallback(
@@ -684,6 +792,7 @@ export default function App() {
         };
       });
 
+      platformBridge.reportLevelEvent('level_completed', levelNum);
       platformBridge.reportScore({
         level: levelNum,
         score: nextScore,
@@ -727,29 +836,94 @@ export default function App() {
   );
 
   // --- PLAYGROUND SDK SCORE & LIFECYCLE REPORTING ---
-  usePlaygroundGameLifecycle(gameState, sdk);
+  usePlaygroundGameLifecycle(gameState, isPlaygamaRuntime ? null : sdk);
 
-  // --- UNIFIED PLATFORM BRIDGE (YouTube Playables, Facebook Gaming, Standalone) ---
+  // --- UNIFIED PLATFORM BRIDGE (Playgama, YouTube Playables, Facebook Gaming, Standalone) ---
   useEffect(() => {
-    platformBridge.init().then(() => {
-      platformBridge.reportGameReady();
+    let cancelled = false;
+
+    platformBridge.init().then(async () => {
+      if (cancelled) return;
+
+      setIsHostAudioMuted(platformBridge.isHostMuted());
+      setIsPlatformPaused(platformBridge.isHostPaused());
+      setIsRewardedSupported(platformBridge.isRewardedAdSupported());
+
+      // Signal game_ready immediately after first rendered frame — do NOT block on cloud storage RPC!
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      if (!cancelled) {
+        await platformBridge.reportGameReady();
+      }
+
+      // Restore cloud save asynchronously in background
+      if (platformBridge.hasPlaygamaBridge()) {
+        const cloud = await platformBridge.loadPlatformData([SAVE_STORAGE_KEY]);
+        if (!cancelled && cloud && cloud[SAVE_STORAGE_KEY]) {
+          const parsedCloud = parseAndSanitizeSaveData(cloud[SAVE_STORAGE_KEY]);
+          if (parsedCloud) {
+            saveDataRef.current = parsedCloud;
+            setSaveData(parsedCloud);
+            if (gameStateRef.current.status === 'START') {
+              const resumeLvl =
+                parsedCloud.checkpoint?.levelNumber ??
+                parsedCloud.currentLevel ??
+                1;
+              const resumeScore =
+                parsedCloud.checkpoint?.levelNumber === resumeLvl
+                  ? parsedCloud.checkpoint.scoreAtLevel
+                  : computeTotalBestScore(parsedCloud);
+              setGameState((prev) => ({
+                ...prev,
+                level: resumeLvl,
+                score: resumeScore,
+              }));
+            }
+          }
+        }
+      }
     });
 
     const unsubPause = platformBridge.onPause(() => {
+      setIsPlatformPaused(true);
       if (gameStateRef.current.status === 'PLAYING') {
         setIsGameMenuOpen(true);
       }
     });
 
+    const unsubResume = platformBridge.onResume(() => {
+      setIsPlatformPaused(false);
+    });
+
     const unsubAudio = platformBridge.onAudioMuteChange((isMuted) => {
-      handleUpdateSettings({sfxMuted: isMuted, musicMuted: isMuted});
+      setIsHostAudioMuted(isMuted);
     });
 
     return () => {
+      cancelled = true;
       unsubPause();
+      unsubResume();
       unsubAudio();
     };
-  }, [handleUpdateSettings]);
+  }, []);
+
+  // Synchronize effective SFX mute state with both user setting and platform audio/pause gates
+  useEffect(() => {
+    const effectiveSfxMute =
+      saveData.settings.sfxMuted || isHostAudioMuted || isPlatformPaused;
+    gameAudio.setMuted(effectiveSfxMute);
+  }, [saveData.settings.sfxMuted, isHostAudioMuted, isPlatformPaused]);
+
+  // Keep platform lifecycle informed about active gameplay vs menus/pauses
+  useEffect(() => {
+    const active =
+      gameState.status === 'PLAYING' &&
+      !isGameMenuOpen &&
+      activeSubModal === 'none' &&
+      !isPlatformPaused;
+    platformBridge.reportGameplayState(active);
+  }, [gameState.status, isGameMenuOpen, activeSubModal, isPlatformPaused]);
 
   // Auto-start when ?autoplay or ?autostart=1 is in the URL
   const hasAutoplayed = useRef(false);
@@ -767,7 +941,9 @@ export default function App() {
   const isMusicPlaying =
     ['START', 'PLAYING', 'PAUSED', 'LEVEL_COMPLETE'].includes(
       gameState.status,
-    ) && !isGameMenuOpen;
+    ) &&
+    !isGameMenuOpen &&
+    !isPlatformPaused;
 
   const activeCosmetic = useMemo(
     () => getCosmeticById(saveData.selectedCosmetic),
@@ -780,7 +956,7 @@ export default function App() {
     countTotalCollectedRelics(saveData) > 0 ||
     saveData.checkpoint !== null;
 
-  const isAnyOverlayPaused = isGameMenuOpen || activeSubModal !== 'none';
+  const isAnyOverlayPaused = isGameMenuOpen || activeSubModal !== 'none' || isPlatformPaused;
 
   // Snapshot initial checkpoint & relics per gameKey (so in-level saves never remount or reset Pip)
   const runInitialRelics = useMemo(
@@ -808,7 +984,7 @@ export default function App() {
       <BackgroundMusic
         url={getConfig('backgroundMusicUrl')}
         isPlaying={isMusicPlaying}
-        isMuted={saveData.settings.musicMuted}
+        isMuted={saveData.settings.musicMuted || isHostAudioMuted || isPlatformPaused}
         volume={getConfig('defaultMusicVolume')}
       />
 
@@ -817,33 +993,64 @@ export default function App() {
 
       {/* TOP HUD BAR (Top-right reserved EXCLUSIVELY for Menu button) */}
       {gameState.status === 'PLAYING' && (
-        <header className="w-full flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 p-2 px-3 bg-[#231f3b]/85 border-b border-[#7d70a6]/40 z-10 shrink-0">
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pointer-events-auto">
-            <div className="px-2.5 py-1 rounded-full bg-[#342e54] border border-[#a498cc]/40 text-[11px] sm:text-xs font-semibold text-[#f3ece1]">
+        <header
+          className="w-full max-w-full flex items-start sm:items-center justify-between gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-[#231f3b]/85 border-b border-[#7d70a6]/40 z-10 shrink-0"
+          style={{
+            paddingTop: 'max(0.375rem, env(safe-area-inset-top))',
+            paddingLeft: 'max(0.5rem, env(safe-area-inset-left))',
+            paddingRight: 'max(0.5rem, env(safe-area-inset-right))',
+          }}>
+          <div className="flex flex-wrap items-center gap-1 sm:gap-2 min-w-0 flex-1 pointer-events-auto">
+            <div className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#342e54] border border-[#a498cc]/40 text-[10px] sm:text-xs font-semibold text-[#f3ece1] max-w-[140px] sm:max-w-none truncate">
               W{String(gameState.level).padStart(2, '0')}/{TOTAL_LEVELS} ·{' '}
               {hudInfo.levelName}
             </div>
-            <div className="px-2.5 py-1 rounded-full bg-[#342e54] border border-[#f2d388]/40 text-[11px] sm:text-xs font-semibold text-[#f2d388]">
+            <div className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#342e54] border border-[#f2d388]/40 text-[10px] sm:text-xs font-semibold text-[#f2d388] shrink-0">
               ★ {hudInfo.relicsCollected}/{hudInfo.relicsTotal}
             </div>
-            <div className="px-2.5 py-1 rounded-full bg-[#342e54] border border-[#7ebdb6]/40 text-[11px] sm:text-xs font-semibold text-[#7ebdb6]">
+            <div className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#342e54] border border-[#7ebdb6]/40 text-[10px] sm:text-xs font-semibold text-[#7ebdb6] shrink-0">
               {gameState.score} pts
             </div>
             <button
               type="button"
-              onClick={() => {
+              title={
+                !showHint && isRewardedSupported
+                  ? 'Watch a short ad to reveal the puzzle hint'
+                  : 'Toggle puzzle hint'
+              }
+              onClick={async () => {
+                if (isShowingAdRef.current) return;
                 gameAudio.playCrispClick();
+                if (!showHint && platformBridge.isRewardedAdSupported()) {
+                  isShowingAdRef.current = true;
+                  try {
+                    const earned =
+                      await platformBridge.showRewarded('hint_reward');
+                    if (earned) {
+                      setShowHint(true);
+                    }
+                  } finally {
+                    isShowingAdRef.current = false;
+                  }
+                  return;
+                }
                 setShowHint((v) => !v);
               }}
-              className="min-h-[34px] px-2.5 py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#e0917a]/45 text-[11px] sm:text-xs font-semibold text-[#e0917a] transition-colors flex items-center gap-1">
-              <Info size={13} />
-              <span>{showHint ? 'Hide Hint' : 'Hint'}</span>
+              className="min-h-[32px] sm:min-h-[34px] px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#e0917a]/45 text-[10px] sm:text-xs font-semibold text-[#e0917a] transition-colors flex items-center gap-1 shrink-0">
+              <Info size={12} />
+              <span>
+                {showHint
+                  ? 'Hide Hint'
+                  : isRewardedSupported
+                    ? 'Hint (Ad)'
+                    : 'Hint'}
+              </span>
             </button>
             <button
               type="button"
               onClick={handleRestartLevel}
-              className="min-h-[34px] px-2.5 py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#b4a7db]/40 text-[11px] sm:text-xs font-semibold text-[#e6dced] transition-colors flex items-center gap-1">
-              <RotateCw size={13} />
+              className="min-h-[32px] sm:min-h-[34px] px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#b4a7db]/40 text-[10px] sm:text-xs font-semibold text-[#e6dced] transition-colors flex items-center gap-1 shrink-0">
+              <RotateCw size={12} />
               <span>Reset</span>
             </button>
             {isMobile && (
@@ -851,14 +1058,14 @@ export default function App() {
                 type="button"
                 aria-label="Reset Camera Angle"
                 onClick={() => commandRef.current?.resetCam()}
-                className="min-h-[34px] px-2.5 py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#7ebdb6]/40 text-[11px] font-semibold text-[#7ebdb6] transition-colors">
+                className="min-h-[32px] sm:min-h-[34px] px-2 py-0.5 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#7ebdb6]/40 text-[10px] sm:text-[11px] font-semibold text-[#7ebdb6] transition-colors shrink-0">
                 ⟲ View
               </button>
             )}
           </div>
 
           {/* Exclusively Menu button in top-right with safe padding */}
-          <div className="ml-auto p-0.5 pointer-events-auto">
+          <div className="shrink-0 p-0.5 pointer-events-auto">
             <button
               type="button"
               aria-label="Open Game Menu"
@@ -868,8 +1075,8 @@ export default function App() {
                 flushCheckpointNow();
                 setIsGameMenuOpen(true);
               }}
-              className="min-h-[36px] px-3 py-1.5 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#b4a7db]/60 text-xs font-bold text-[#f3ece1] flex items-center gap-1.5 transition-colors shadow">
-              <Pause size={14} />
+              className="min-h-[34px] sm:min-h-[36px] px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#b4a7db]/60 text-[11px] sm:text-xs font-bold text-[#f3ece1] flex items-center gap-1.5 transition-colors shadow">
+              <Pause size={13} />
               <span>Menu</span>
             </button>
           </div>
@@ -878,25 +1085,30 @@ export default function App() {
 
       {/* 3D CANVAS WRAPPER */}
       <div className="flex-1 w-full min-h-0 relative flex items-center justify-center overflow-hidden">
-        <Game
-          key={gameKey}
-          gameState={gameState}
-          setGameState={setGameState}
-          exitChat={exitChat}
-          gameStateRef={gameStateRef}
-          externalInputRef={sharedInputRef}
-          paused={isAnyOverlayPaused}
-          onHudUpdate={setHudInfo}
-          onCheckpointUpdate={handleCheckpointUpdate}
-          onRelicCollected={handleRelicCollected}
-          onLevelCompleted={handleLevelCompleted}
-          commandRef={commandRef}
-          cosmetic={activeCosmetic}
-          dragSensitivity={saveData.settings.dragSensitivity}
-          highQualityEffects={saveData.settings.highQualityEffects}
-          initialCollectedRelics={runInitialRelics}
-          initialCheckpoint={runInitialCheckpoint}
-        />
+        <React.Suspense
+          fallback={
+            <div className="w-full h-full bg-gradient-to-b from-[#6d85a9] via-[#8da5c6] to-[#c7bfdc]" />
+          }>
+          <LazyGame
+            key={gameKey}
+            gameState={gameState}
+            setGameState={setGameState}
+            exitChat={exitChat}
+            gameStateRef={gameStateRef}
+            externalInputRef={sharedInputRef}
+            paused={isAnyOverlayPaused}
+            onHudUpdate={setHudInfo}
+            onCheckpointUpdate={handleCheckpointUpdate}
+            onRelicCollected={handleRelicCollected}
+            onLevelCompleted={handleLevelCompleted}
+            commandRef={commandRef}
+            cosmetic={activeCosmetic}
+            dragSensitivity={saveData.settings.dragSensitivity}
+            highQualityEffects={saveData.settings.highQualityEffects}
+            initialCollectedRelics={runInitialRelics}
+            initialCheckpoint={runInitialCheckpoint}
+          />
+        </React.Suspense>
 
         {/* Slim Objective / Optical Status / Hint Banner */}
         {gameState.status === 'PLAYING' && !isAnyOverlayPaused && (
@@ -920,6 +1132,16 @@ export default function App() {
                 ✦ Optical Pathway Aligned
               </div>
             )}
+
+            {hudInfo.idleHintLabel &&
+              !hudInfo.statusBanner &&
+              !hudInfo.blockedFeedback && (
+                <div
+                  data-testid="idle-mechanism-hint"
+                  className="px-2.5 py-0.5 rounded-full bg-[#231f3b]/88 border border-[#f2d388]/65 text-[10px] sm:text-[11px] font-semibold text-[#f2d388] shadow animate-pulse text-center">
+                  ✨ Next Step: {hudInfo.idleHintLabel}
+                </div>
+              )}
 
             {hudInfo.hasPerspectiveLinks &&
               !hudInfo.perspectiveAligned &&
@@ -1037,13 +1259,9 @@ export default function App() {
         <LevelSelectModal
           saveData={saveData}
           currentLevel={gameState.level}
-          onSelectLevel={(lvl) => {
-            const scoreForLevel =
-              saveData.checkpoint?.levelNumber === lvl
-                ? saveData.checkpoint.scoreAtLevel
-                : computeTotalBestScore(saveData);
-            startRun(lvl, scoreForLevel);
-          }}
+          isRewardedAdSupported={isRewardedSupported}
+          onSelectLevel={handleSelectLevel}
+          onUnlockLevelWithAd={handleUnlockLevelWithAd}
           onClose={() => setActiveSubModal('none')}
         />
       )}

@@ -1,4 +1,4 @@
-import {LevelDef, MechanismDef, TileNode} from './types';
+import {LevelDef, MechanismDef, Position3D, TileNode} from './types';
 
 export const LEVELS: LevelDef[] = [
   // =========================================================================
@@ -1794,4 +1794,324 @@ export function resolveMechanismTrigger(
   }
 
   return {allowed: true, nextStates, labels};
+}
+
+export interface NextHintTarget {
+  kind: 'plate' | 'mechanism' | 'perspective' | 'goal';
+  targetId: string;
+  label: string;
+  position: Position3D;
+}
+
+/** Computes exact world handle center of a mechanism for visual hints & particles. */
+export function computeMechanismHandlePos(
+  mech: MechanismDef,
+  mechStates: Record<string, number>,
+): Position3D {
+  const st = mechStates[mech.id] ?? mech.initialState;
+  const anchor = mech.crankPos ?? mech.pivot;
+  if (mech.type === 'rotary') {
+    return [anchor[0] + 0.92, anchor[1] - 1.85, anchor[2]];
+  }
+  if (mech.type === 'crystal') {
+    return [anchor[0], anchor[1] + 0.12, anchor[2]];
+  }
+  if (mech.type === 'elevator') {
+    const off = mech.moveOffset ?? [0, 0, 0];
+    const raised = st % 2 === 1;
+    return [
+      anchor[0] + (raised ? off[0] : 0) + 0.84,
+      anchor[1] + (raised ? off[1] : 0) + 0.48,
+      anchor[2] + (raised ? off[2] : 0) + 0.84,
+    ];
+  }
+  return [anchor[0], anchor[1] + 0.35, anchor[2]];
+}
+
+function getReachableNodeSet(
+  adj: Map<string, string[]>,
+  startId: string,
+): Set<string> {
+  const visited = new Set<string>();
+  if (!adj.has(startId)) return visited;
+  const q = [startId];
+  visited.add(startId);
+  let head = 0;
+  while (head < q.length) {
+    const curr = q[head++];
+    for (const nxt of adj.get(curr) ?? []) {
+      if (!visited.has(nxt)) {
+        visited.add(nxt);
+        q.push(nxt);
+      }
+    }
+  }
+  return visited;
+}
+
+/**
+ * Finds the immediate next functional step (plate, crank/crystal/elevator, optical camera orbit,
+ * or Sanctuary goal) along a valid path toward completing the level from the current live state.
+ */
+export function findNextHintTarget(
+  level: LevelDef,
+  startNodeId: string,
+  mechStates: Record<string, number>,
+  camAngle: number,
+  alreadyPressedPlates: string[] = [],
+): NextHintTarget | null {
+  const normalizedCam = ((camAngle % 4) + 4) % 4;
+  const normalizeStates = (states: Record<string, number>) => {
+    const out: Record<string, number> = {};
+    for (const m of level.mechanisms) {
+      const raw = states[m.id] ?? m.initialState;
+      out[m.id] =
+        m.type === 'rotary' ? ((raw % 4) + 4) % 4 : Math.abs(raw % 2);
+    }
+    return out;
+  };
+
+  const stateKey = (
+    nodeId: string,
+    reachable: Set<string>,
+    states: Record<string, number>,
+    pressed: Set<string>,
+    angle: number,
+    world: Map<string, WorldNodePos>,
+  ) => {
+    const standingGroup = world.get(nodeId)?.node.groupId ?? '';
+    let minNode = '';
+    for (const id of reachable) {
+      if (!minNode || id < minNode) minNode = id;
+    }
+    const mechSig = level.mechanisms.map((m) => states[m.id]).join(',');
+    const plateSig = level.tiles
+      .filter((t) => t.kind === 'plate' && !t.plateToggle)
+      .map((t) => (pressed.has(t.id) ? '1' : '0'))
+      .join('');
+    return `${minNode}|${standingGroup}|${angle}|${mechSig}|${plateSig}`;
+  };
+
+  const initStates = normalizeStates(mechStates);
+  const initPressed = new Set(alreadyPressedPlates);
+  const initWorld = evaluateLevelNodes(level, initStates);
+  const initAdj = buildWalkableGraph(level, initWorld, normalizedCam, true);
+  const initReach = getReachableNodeSet(initAdj, startNodeId);
+
+  if (initReach.has(level.goalNodeId)) {
+    const goalPos = initWorld.get(level.goalNodeId);
+    if (goalPos) {
+      return {
+        kind: 'goal',
+        targetId: level.goalNodeId,
+        label: 'Sanctuary Beacon',
+        position: [goalPos.wx, goalPos.wy + 0.25, goalPos.wz],
+      };
+    }
+  }
+
+  interface BfsState {
+    nodeId: string;
+    states: Record<string, number>;
+    pressed: Set<string>;
+    camAngle: number;
+    firstStep: NextHintTarget | null;
+  }
+
+  const visited = new Set<string>();
+  visited.add(
+    stateKey(startNodeId, initReach, initStates, initPressed, normalizedCam, initWorld),
+  );
+
+  const queue: BfsState[] = [
+    {
+      nodeId: startNodeId,
+      states: initStates,
+      pressed: initPressed,
+      camAngle: normalizedCam,
+      firstStep: null,
+    },
+  ];
+
+  let head = 0;
+  const MAX_STATES = 2500;
+
+  while (head < queue.length && visited.size < MAX_STATES) {
+    const cur = queue[head++];
+    const world =
+      head === 1 ? initWorld : evaluateLevelNodes(level, cur.states);
+    const adj =
+      head === 1
+        ? initAdj
+        : buildWalkableGraph(level, world, cur.camAngle, true);
+    const reach =
+      head === 1 ? initReach : getReachableNodeSet(adj, cur.nodeId);
+
+    if (reach.has(level.goalNodeId)) {
+      return cur.firstStep;
+    }
+
+    const pushNext = (
+      nextNode: string,
+      nextStatesRaw: Record<string, number>,
+      nextPressed: Set<string>,
+      nextAngle: number,
+      candidateStep: NextHintTarget,
+    ) => {
+      const nextStates = normalizeStates(nextStatesRaw);
+      const nw = evaluateLevelNodes(level, nextStates);
+      if (!nw.get(nextNode)?.active) return null;
+      const na = buildWalkableGraph(level, nw, nextAngle, true);
+      const nr = getReachableNodeSet(na, nextNode);
+      const key = stateKey(nextNode, nr, nextStates, nextPressed, nextAngle, nw);
+      if (visited.has(key)) return null;
+      visited.add(key);
+      const firstStep = cur.firstStep ?? candidateStep;
+      if (nr.has(level.goalNodeId)) {
+        return firstStep;
+      }
+      queue.push({
+        nodeId: nextNode,
+        states: nextStates,
+        pressed: nextPressed,
+        camAngle: nextAngle,
+        firstStep,
+      });
+      return null;
+    };
+
+    // Representative safe landing positions inside reach (static ground + 1 tile per reachable moving group)
+    const riderAnchors = new Map<string, string>();
+    let staticAnchor = cur.nodeId;
+    for (const rid of reach) {
+      const re = world.get(rid);
+      if (!re) continue;
+      if (!re.node.groupId && !re.node.hiddenUntilGroup) {
+        staticAnchor = rid;
+      } else if (re.node.groupId && !riderAnchors.has(re.node.groupId)) {
+        riderAnchors.set(re.node.groupId, rid);
+      }
+    }
+    const candidateStandingSpots = Array.from(
+      new Set([cur.nodeId, staticAnchor, ...riderAnchors.values()]),
+    );
+
+    // 1. Pressure plates currently reachable by walking
+    for (const nid of reach) {
+      const entry = world.get(nid);
+      if (
+        !entry ||
+        entry.node.kind !== 'plate' ||
+        !entry.node.plateTriggers?.length
+      ) {
+        continue;
+      }
+      if (!entry.node.plateToggle && cur.pressed.has(nid)) {
+        continue;
+      }
+      const res = resolveMechanismTrigger(
+        level,
+        cur.states,
+        entry.node.plateTriggers,
+        1,
+        [nid],
+      );
+      if (!res.allowed) continue;
+      const nextPressed = new Set(cur.pressed);
+      if (entry.node.plateToggle && nextPressed.has(nid)) {
+        nextPressed.delete(nid);
+      } else {
+        nextPressed.add(nid);
+      }
+      const found = pushNext(nid, res.nextStates, nextPressed, cur.camAngle, {
+        kind: 'plate',
+        targetId: nid,
+        label: 'Awakening Plate',
+        position: [entry.wx, entry.wy + 0.14, entry.wz],
+      });
+      if (found) return found;
+    }
+
+    // 2. Directly interactable mechanisms (rotary, crystal, elevator, gate) from valid standing tiles
+    const directMechs = level.mechanisms.filter((m) => m.directInteract);
+    const orderedMechs = directMechs.sort((a, b) => {
+      const isNear = (m: MechanismDef) => {
+        const pos = computeMechanismHandlePos(m, cur.states);
+        for (const rid of reach) {
+          const re = world.get(rid);
+          if (!re) continue;
+          if (re.node.groupId === m.id) return true;
+          if (Math.hypot(re.wx - pos[0], re.wz - pos[2]) <= 4.8) return true;
+        }
+        return false;
+      };
+      return Number(isNear(b)) - Number(isNear(a));
+    });
+
+    for (const m of orderedMechs) {
+      for (const standNode of candidateStandingSpots) {
+        const standGroup = world.get(standNode)?.node.groupId;
+        // Skip unrelated platform riders unless it's cur.nodeId or riding this mechanism's platform
+        if (standNode !== cur.nodeId && standNode !== staticAnchor && standGroup !== m.id) {
+          continue;
+        }
+        const res = resolveMechanismTrigger(
+          level,
+          cur.states,
+          [m.id],
+          1,
+          [standNode],
+        );
+        if (!res.allowed) continue;
+        const found = pushNext(
+          standNode,
+          res.nextStates,
+          cur.pressed,
+          cur.camAngle,
+          {
+            kind: 'mechanism',
+            targetId: m.id,
+            label: m.label,
+            position: computeMechanismHandlePos(m, cur.states),
+          },
+        );
+        if (found) return found;
+      }
+    }
+
+    // 3. Camera orbit quadrants for optical illusion alignment
+    if (level.perspectiveLinks.length > 0) {
+      for (const delta of [1, 3, 2]) {
+        const nextAngle = (cur.camAngle + delta) % 4;
+        const alignedLink = level.perspectiveLinks.find((pl) => {
+          if (!pl.alignedAngles.includes(nextAngle)) return false;
+          const a = world.get(pl.nodeA);
+          const b = world.get(pl.nodeB);
+          return Boolean(a?.active && b?.active);
+        });
+        if (!alignedLink) continue;
+        const a = world.get(alignedLink.nodeA)!;
+        const b = world.get(alignedLink.nodeB)!;
+        const found = pushNext(
+          staticAnchor,
+          cur.states,
+          cur.pressed,
+          nextAngle,
+          {
+            kind: 'perspective',
+            targetId: alignedLink.id,
+            label: 'Orbit Camera to Align Bridge',
+            position: [
+              (a.wx + b.wx) / 2,
+              Math.max(a.wy, b.wy) + 0.35,
+              (a.wz + b.wz) / 2,
+            ],
+          },
+        );
+        if (found) return found;
+      }
+    }
+  }
+
+  return null;
 }

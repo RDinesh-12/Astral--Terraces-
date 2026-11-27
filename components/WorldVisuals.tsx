@@ -93,6 +93,7 @@ export interface TravelerProps {
   walking: boolean;
   celebrating?: boolean;
   interacting?: boolean;
+  idleEmote?: boolean;
   tunicColor?: string;
   scarfColor?: string;
   capColor?: string;
@@ -105,6 +106,7 @@ export const TravelerPip = forwardRef<THREE.Group, TravelerProps>(
       walking,
       celebrating = false,
       interacting = false,
+      idleEmote = false,
       tunicColor = THEME.turquoise,
       scarfColor = THEME.dustyRose,
       capColor = THEME.lavenderArch,
@@ -113,31 +115,112 @@ export const TravelerPip = forwardRef<THREE.Group, TravelerProps>(
     ref,
   ) {
     const bodyGroup = useRef<THREE.Group>(null);
+    const headRef = useRef<THREE.Group>(null);
     const leftLeg = useRef<THREE.Group>(null);
     const rightLeg = useRef<THREE.Group>(null);
     const leftArm = useRef<THREE.Group>(null);
     const rightArm = useRef<THREE.Group>(null);
     const scarfRef = useRef<THREE.Mesh>(null);
     const lanternRef = useRef<THREE.Group>(null);
+    const lanternMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
-    useFrame(({clock}) => {
+    useFrame(({clock}, delta) => {
       const t = clock.getElapsedTime();
+      const lerpAlpha = Math.min(1, delta * 8.5);
       const strideSpeed = walking ? 11.5 : 2.1;
       const strideAmp = walking ? 0.52 : 0.02;
+      const emoting = idleEmote && !walking && !celebrating && !interacting;
 
       if (leftLeg.current && rightLeg.current) {
-        leftLeg.current.rotation.x = Math.sin(t * strideSpeed) * strideAmp;
-        rightLeg.current.rotation.x = -Math.sin(t * strideSpeed) * strideAmp;
+        const legTargetL = emoting
+          ? Math.sin(t * 1.4) * 0.06
+          : Math.sin(t * strideSpeed) * strideAmp;
+        const legTargetR = emoting
+          ? -Math.sin(t * 1.4) * 0.06
+          : -Math.sin(t * strideSpeed) * strideAmp;
+        leftLeg.current.rotation.x = THREE.MathUtils.lerp(
+          leftLeg.current.rotation.x,
+          legTargetL,
+          lerpAlpha,
+        );
+        rightLeg.current.rotation.x = THREE.MathUtils.lerp(
+          rightLeg.current.rotation.x,
+          legTargetR,
+          lerpAlpha,
+        );
       }
 
       if (leftArm.current && rightArm.current) {
         if (interacting) {
           rightArm.current.rotation.x = -1.1;
+          rightArm.current.rotation.z = 0;
           leftArm.current.rotation.x = 0.25;
+          leftArm.current.rotation.z = 0;
+        } else if (emoting) {
+          // Raise lantern arm gently and sway while scouting next mechanism
+          rightArm.current.rotation.x = THREE.MathUtils.lerp(
+            rightArm.current.rotation.x,
+            -0.98 + Math.sin(t * 2.4) * 0.22,
+            lerpAlpha,
+          );
+          rightArm.current.rotation.z = THREE.MathUtils.lerp(
+            rightArm.current.rotation.z,
+            -0.22 + Math.cos(t * 1.8) * 0.1,
+            lerpAlpha,
+          );
+          leftArm.current.rotation.x = THREE.MathUtils.lerp(
+            leftArm.current.rotation.x,
+            0.22 + Math.sin(t * 2.4) * 0.16,
+            lerpAlpha,
+          );
+          leftArm.current.rotation.z = THREE.MathUtils.lerp(
+            leftArm.current.rotation.z,
+            0.16,
+            lerpAlpha,
+          );
         } else {
-          leftArm.current.rotation.x = -Math.sin(t * strideSpeed) * (strideAmp * 0.7);
-          rightArm.current.rotation.x = Math.sin(t * strideSpeed) * (strideAmp * 0.5) - 0.15;
+          leftArm.current.rotation.x = THREE.MathUtils.lerp(
+            leftArm.current.rotation.x,
+            -Math.sin(t * strideSpeed) * (strideAmp * 0.7),
+            lerpAlpha,
+          );
+          leftArm.current.rotation.z = THREE.MathUtils.lerp(
+            leftArm.current.rotation.z,
+            0,
+            lerpAlpha,
+          );
+          rightArm.current.rotation.x = THREE.MathUtils.lerp(
+            rightArm.current.rotation.x,
+            Math.sin(t * strideSpeed) * (strideAmp * 0.5) - 0.15,
+            lerpAlpha,
+          );
+          rightArm.current.rotation.z = THREE.MathUtils.lerp(
+            rightArm.current.rotation.z,
+            0,
+            lerpAlpha,
+          );
         }
+      }
+
+      if (headRef.current) {
+        const targetHeadY = emoting ? Math.sin(t * 1.35) * 0.48 : 0;
+        const targetHeadZ = emoting ? Math.sin(t * 0.9) * 0.12 : 0;
+        const targetHeadX = emoting ? -0.07 + Math.sin(t * 2.2) * 0.07 : 0;
+        headRef.current.rotation.y = THREE.MathUtils.lerp(
+          headRef.current.rotation.y,
+          targetHeadY,
+          lerpAlpha,
+        );
+        headRef.current.rotation.z = THREE.MathUtils.lerp(
+          headRef.current.rotation.z,
+          targetHeadZ,
+          lerpAlpha,
+        );
+        headRef.current.rotation.x = THREE.MathUtils.lerp(
+          headRef.current.rotation.x,
+          targetHeadX,
+          lerpAlpha,
+        );
       }
 
       if (bodyGroup.current) {
@@ -145,21 +228,57 @@ export const TravelerPip = forwardRef<THREE.Group, TravelerProps>(
           ? Math.abs(Math.sin(t * 6)) * 0.26
           : walking
             ? Math.abs(Math.sin(t * strideSpeed)) * 0.085
-            : Math.sin(t * 2.2) * 0.028;
-        bodyGroup.current.position.y = bob;
-        bodyGroup.current.rotation.z = walking
+            : emoting
+              ? Math.abs(Math.sin(t * 2.6)) * 0.065
+              : Math.sin(t * 2.2) * 0.028;
+        bodyGroup.current.position.y = THREE.MathUtils.lerp(
+          bodyGroup.current.position.y,
+          bob,
+          lerpAlpha,
+        );
+        const tiltZ = walking
           ? Math.sin(t * strideSpeed) * 0.04
-          : 0;
+          : emoting
+            ? Math.sin(t * 1.35) * 0.065
+            : 0;
+        bodyGroup.current.rotation.z = THREE.MathUtils.lerp(
+          bodyGroup.current.rotation.z,
+          tiltZ,
+          lerpAlpha,
+        );
       }
 
       if (scarfRef.current) {
         scarfRef.current.rotation.x =
-          0.28 + (walking ? 0.42 : 0.1) + Math.sin(t * 5.2) * 0.11;
+          0.28 +
+          (walking ? 0.42 : emoting ? 0.22 : 0.1) +
+          Math.sin(t * (emoting ? 6.2 : 5.2)) * (emoting ? 0.16 : 0.11);
       }
 
       if (lanternRef.current) {
-        lanternRef.current.position.y = 0.96 + Math.sin(t * 3.1) * 0.075;
-        lanternRef.current.rotation.y = t * 0.95;
+        const targetLanternY = emoting
+          ? 1.24 + Math.sin(t * 2.6) * 0.13
+          : 0.96 + Math.sin(t * 3.1) * 0.075;
+        const targetLanternZ = emoting
+          ? -0.28 + Math.sin(t * 1.8) * 0.07
+          : -0.18;
+        lanternRef.current.position.y = THREE.MathUtils.lerp(
+          lanternRef.current.position.y,
+          targetLanternY,
+          lerpAlpha,
+        );
+        lanternRef.current.position.z = THREE.MathUtils.lerp(
+          lanternRef.current.position.z,
+          targetLanternZ,
+          lerpAlpha,
+        );
+        lanternRef.current.rotation.y = t * (emoting ? 2.1 : 0.95);
+      }
+
+      if (lanternMatRef.current) {
+        lanternMatRef.current.emissiveIntensity = emoting
+          ? 2.2 + Math.sin(t * 4.5) * 0.45
+          : 1.65;
       }
     });
 
@@ -229,35 +348,37 @@ export const TravelerPip = forwardRef<THREE.Group, TravelerProps>(
             <meshStandardMaterial color={THEME.beaconGold} roughness={0.35} />
           </mesh>
 
-          {/* Head */}
-          <mesh position={[0, 1.24, 0]} castShadow>
-            <sphereGeometry args={[0.195, 16, 16]} />
-            <meshStandardMaterial color="#fff8f0" roughness={0.55} />
-          </mesh>
-          {/* Dark indigo starry visor facing -Z */}
-          <mesh position={[0, 1.24, -0.145]}>
-            <sphereGeometry args={[0.115, 12, 12]} />
-            <meshStandardMaterial color={THEME.deepIndigo} roughness={0.35} />
-          </mesh>
-          {/* Luminous eyes facing -Z */}
-          <mesh position={[-0.045, 1.25, -0.238]}>
-            <sphereGeometry args={[0.023, 8, 8]} />
-            <meshBasicMaterial color="#ffe9ad" />
-          </mesh>
-          <mesh position={[0.045, 1.25, -0.238]}>
-            <sphereGeometry args={[0.023, 8, 8]} />
-            <meshBasicMaterial color="#ffe9ad" />
-          </mesh>
+          {/* Head + Hood pivoted naturally around the neck [0, 1.06, 0] */}
+          <group ref={headRef} position={[0, 1.06, 0]}>
+            <mesh position={[0, 0.18, 0]} castShadow>
+              <sphereGeometry args={[0.195, 16, 16]} />
+              <meshStandardMaterial color="#fff8f0" roughness={0.55} />
+            </mesh>
+            {/* Dark indigo starry visor facing -Z */}
+            <mesh position={[0, 0.18, -0.145]}>
+              <sphereGeometry args={[0.115, 12, 12]} />
+              <meshStandardMaterial color={THEME.deepIndigo} roughness={0.35} />
+            </mesh>
+            {/* Luminous eyes facing -Z */}
+            <mesh position={[-0.045, 0.19, -0.238]}>
+              <sphereGeometry args={[0.023, 8, 8]} />
+              <meshBasicMaterial color="#ffe9ad" />
+            </mesh>
+            <mesh position={[0.045, 0.19, -0.238]}>
+              <sphereGeometry args={[0.023, 8, 8]} />
+              <meshBasicMaterial color="#ffe9ad" />
+            </mesh>
 
-          {/* Pointed celestial hood + golden circlet */}
-          <mesh position={[0, 1.36, 0]} rotation={[Math.PI / 2 - 0.15, 0, 0]}>
-            <torusGeometry args={[0.185, 0.022, 8, 20]} />
-            <meshStandardMaterial color={THEME.beaconGold} roughness={0.35} metalness={0.3} />
-          </mesh>
-          <mesh position={[0, 1.5, 0.03]} rotation={[-0.22, 0, 0]} castShadow>
-            <coneGeometry args={[0.215, 0.45, 14]} />
-            <meshStandardMaterial color={capColor} roughness={0.68} />
-          </mesh>
+            {/* Pointed celestial hood + golden circlet */}
+            <mesh position={[0, 0.3, 0]} rotation={[Math.PI / 2 - 0.15, 0, 0]}>
+              <torusGeometry args={[0.185, 0.022, 8, 20]} />
+              <meshStandardMaterial color={THEME.beaconGold} roughness={0.35} metalness={0.3} />
+            </mesh>
+            <mesh position={[0, 0.44, 0.03]} rotation={[-0.22, 0, 0]} castShadow>
+              <coneGeometry args={[0.215, 0.45, 14]} />
+              <meshStandardMaterial color={capColor} roughness={0.68} />
+            </mesh>
+          </group>
 
           {/* Flowing trailing scarf toward +Z */}
           <mesh
@@ -274,6 +395,7 @@ export const TravelerPip = forwardRef<THREE.Group, TravelerProps>(
             <mesh>
               <octahedronGeometry args={[0.105, 0]} />
               <meshStandardMaterial
+                ref={lanternMatRef}
                 color={THEME.lanternAmber}
                 emissive={THEME.lanternAmber}
                 emissiveIntensity={1.65}
@@ -874,6 +996,138 @@ export function CrankControl({
           />
         </mesh>
       )}
+    </group>
+  );
+}
+
+// =========================================================================
+// IDLE GUIDANCE PARTICLES (Illuminates Next Functional Mechanism on Idle)
+// =========================================================================
+
+const GUIDE_MOTE_PHASES = Array.from({length: 12}, (_, i) => ({
+  angleOffset: (i / 12) * Math.PI * 2,
+  phase: i / 12,
+  radius: 0.42 + (i % 3) * 0.16,
+  isGold: i % 2 === 0,
+}));
+
+export function MechanismGuideParticles({
+  position,
+  kind,
+}: {
+  position: [number, number, number];
+  kind: 'plate' | 'mechanism' | 'perspective' | 'goal';
+}) {
+  const motesRef = useRef<(THREE.Mesh | null)[]>([]);
+  const outerRingRef = useRef<THREE.Mesh>(null);
+  const innerRingRef = useRef<THREE.Mesh>(null);
+  const beamRef = useRef<THREE.Mesh>(null);
+
+  const primaryColor =
+    kind === 'plate' || kind === 'perspective'
+      ? THEME.turquoise
+      : THEME.beaconGold;
+  const secondaryColor =
+    kind === 'plate' || kind === 'perspective'
+      ? THEME.beaconGold
+      : THEME.turquoise;
+
+  useFrame(({clock}) => {
+    const t = clock.getElapsedTime();
+
+    for (let i = 0; i < GUIDE_MOTE_PHASES.length; i++) {
+      const m = motesRef.current[i];
+      if (!m) continue;
+      const cfg = GUIDE_MOTE_PHASES[i];
+      const prog = (t * 0.62 + cfg.phase) % 1;
+      const angle = cfg.angleOffset + t * 2.1;
+      const spread = cfg.radius * (1 - prog * 0.35);
+      m.position.set(
+        Math.cos(angle) * spread,
+        0.12 + prog * 2.15,
+        Math.sin(angle) * spread,
+      );
+      const fadeScale = Math.sin(prog * Math.PI) * 1.15;
+      m.scale.setScalar(Math.max(0.01, fadeScale));
+      m.rotation.y = t * 2.4 + i;
+      m.rotation.x = t * 1.6;
+    }
+
+    if (outerRingRef.current) {
+      const pulse = 1 + Math.sin(t * 3.4) * 0.16;
+      outerRingRef.current.scale.set(pulse, pulse, 1);
+      outerRingRef.current.rotation.z = t * 0.9;
+    }
+
+    if (innerRingRef.current) {
+      const pulse2 = 1 + Math.cos(t * 4.2) * 0.12;
+      innerRingRef.current.scale.set(pulse2, pulse2, 1);
+    }
+
+    if (beamRef.current) {
+      const mat = beamRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.14 + Math.sin(t * 3.2) * 0.06;
+    }
+  });
+
+  return (
+    <group position={position}>
+      {/* Soft shimmering vertical spire beacon */}
+      <mesh ref={beamRef} position={[0, 1.1, 0]}>
+        <cylinderGeometry args={[0.18, 0.56, 2.2, 12, 1, true]} />
+        <meshBasicMaterial
+          color={primaryColor}
+          transparent
+          opacity={0.18}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Dual pulsing guide rings */}
+      <mesh
+        ref={outerRingRef}
+        position={[0, 0.06, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.72, 0.92, 24]} />
+        <meshBasicMaterial
+          color={primaryColor}
+          transparent
+          opacity={0.85}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh
+        ref={innerRingRef}
+        position={[0, 0.08, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.36, 0.48, 20]} />
+        <meshBasicMaterial
+          color={secondaryColor}
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Rising spiraling starlight motes */}
+      {GUIDE_MOTE_PHASES.map((cfg, idx) => (
+        <mesh
+          key={idx}
+          ref={(el) => {
+            motesRef.current[idx] = el;
+          }}>
+          <octahedronGeometry args={[0.095, 0]} />
+          <meshStandardMaterial
+            color={cfg.isGold ? THEME.beaconGold : THEME.turquoise}
+            emissive={cfg.isGold ? THEME.beaconGold : THEME.turquoise}
+            emissiveIntensity={2.2}
+            roughness={0.15}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }

@@ -4,6 +4,7 @@ node_modules/
 
 # Production build
 dist/
+dist-playgama/
 
 # Environment variables and secrets
 .env

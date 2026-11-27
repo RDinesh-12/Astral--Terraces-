@@ -180,6 +180,7 @@ export interface LevelHudInfo {
   hasPerspectiveLinks: boolean;
   canInteractNearby: boolean;
   nearbyLabel: string;
+  idleHintLabel?: string;
   statusBanner: string;
   blockedFeedback: string;
 }

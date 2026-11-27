@@ -350,6 +350,21 @@ function tryParseAndSanitize(rawJson: string | null): SaveData | null {
   }
 }
 
+export function isPlaygamaManagedStorage(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof (window as {bridge?: unknown}).bridge !== 'undefined'
+  );
+}
+
+export function parseAndSanitizeSaveData(raw: unknown): SaveData | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    return tryParseAndSanitize(raw);
+  }
+  return sanitizeSaveData(raw);
+}
+
 export interface LoadSaveResult {
   data: SaveData;
   restoredFromSave: boolean;
@@ -358,13 +373,17 @@ export interface LoadSaveResult {
 }
 
 /**
- * Loads and validates save data from localStorage.
+ * Loads and validates save data from localStorage (or returns defaults when managed by Playgama Bridge).
  * Falls back safely to backup key if primary is corrupted, and never
  * overwrites existing valid storage with empty default data.
  */
 export function loadSaveResult(): LoadSaveResult {
   try {
-    if (typeof window === 'undefined' || !window.localStorage) {
+    if (
+      typeof window === 'undefined' ||
+      isPlaygamaManagedStorage() ||
+      !window.localStorage
+    ) {
       return {
         data: createDefaultSaveData(),
         restoredFromSave: false,
@@ -459,12 +478,15 @@ export interface PersistResult {
  */
 export function persistSaveData(data: SaveData): PersistResult {
   try {
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return {ok: false, error: 'Local storage unavailable'};
-    }
     const normalized = sanitizeSaveData(data);
     if (!normalized) {
       return {ok: false, error: 'Invalid save payload'};
+    }
+    if (typeof window === 'undefined' || isPlaygamaManagedStorage()) {
+      return {ok: true};
+    }
+    if (!window.localStorage) {
+      return {ok: false, error: 'Local storage unavailable'};
     }
     const json = JSON.stringify(normalized);
     // Validate JSON round-trip before writing

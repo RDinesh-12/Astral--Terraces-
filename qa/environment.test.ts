@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   computeOpticalSeamEdges,
   evaluateLevelNodes,
+  findNextHintTarget,
   LEVELS,
   resolveMechanismTrigger,
 } from '../levels';
@@ -290,4 +291,36 @@ test('every stair across all 10 levels connects flush to its bottom and top land
   }
 
   assert.ok(stairCount >= 9, `Expected >=9 stairs audited, got ${stairCount}`);
+});
+
+test('idle guidance solver resolves a valid next functional target across all 10 levels', () => {
+  for (const level of LEVELS) {
+    const initStates: Record<string, number> = {};
+    for (const m of level.mechanisms) {
+      initStates[m.id] = m.initialState;
+    }
+
+    const hint = findNextHintTarget(
+      level,
+      level.startNodeId,
+      initStates,
+      level.defaultCamAngle,
+    );
+    assert.ok(hint, `Level ${level.levelNumber} did not produce a next hint target`);
+    assert.equal(hint.position.length, 3);
+    assert.ok(hint.label.length > 0);
+    assert.ok(
+      Number.isFinite(hint.position[0]) &&
+        Number.isFinite(hint.position[1]) &&
+        Number.isFinite(hint.position[2]),
+      `Invalid particle coordinates on Level ${level.levelNumber}`,
+    );
+  }
+
+  // Also verify Level 1 recommends Awakening Plate initially, then Sanctuary Beacon once triggered
+  const lvl1 = LEVELS[0];
+  const lvl1Hint0 = findNextHintTarget(lvl1, lvl1.startNodeId, {l1_gate_bridge: 0, l1_gate_relic: 0}, lvl1.defaultCamAngle, []);
+  assert.equal(lvl1Hint0?.kind, 'plate');
+  const lvl1Hint1 = findNextHintTarget(lvl1, 'l1_plate', {l1_gate_bridge: 1, l1_gate_relic: 1}, lvl1.defaultCamAngle, ['l1_plate']);
+  assert.equal(lvl1Hint1?.kind, 'goal');
 });

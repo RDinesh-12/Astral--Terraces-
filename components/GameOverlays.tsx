@@ -1,4 +1,3 @@
-import {Canvas, useFrame} from '@react-three/fiber';
 import {
   Gamepad,
   Home,
@@ -10,8 +9,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import React, {useEffect, useRef, useState} from 'react';
-import * as THREE from 'three';
+import React, {Suspense, useEffect, useRef, useState} from 'react';
 import {THEME, TOTAL_LEVELS} from '../constants';
 import {LEVELS} from '../levels';
 import {
@@ -21,8 +19,9 @@ import {
   TRAVELER_COSMETICS,
 } from '../saveSystem';
 import {SaveData, TravelerCosmetic} from '../types';
-import {gameAudio} from '../utils';
-import {TravelerPip} from './WorldVisuals';
+import {gameAudio} from '../utils/helper';
+
+const LazyCharacterPreview3D = React.lazy(() => import('./CharacterPreview3D'));
 
 // =========================================================================
 // DECOUPLED SCROLLABLE MODAL SHELL (Prevents Mobile Clipping Bug)
@@ -40,8 +39,14 @@ function ScrollableModal({
   return (
     <div
       className={`fixed inset-0 ${backdropClass} overflow-y-auto touch-auto`}
-      style={{zIndex}}>
-      <div className="min-h-full flex flex-col items-center p-4 sm:p-6">
+      style={{
+        zIndex,
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'env(safe-area-inset-left)',
+        paddingRight: 'env(safe-area-inset-right)',
+      }}>
+      <div className="min-h-full flex flex-col items-center p-3 sm:p-6">
         <div className="m-auto w-full flex flex-col items-center">
           {children}
         </div>
@@ -51,49 +56,22 @@ function ScrollableModal({
 }
 
 // =========================================================================
-// LIVE 3D CHARACTER PREVIEW FOR PIP
-// =========================================================================
-
-function SpinningPreviewPip({cosmetic}: {cosmetic: TravelerCosmetic}) {
-  const ref = useRef<THREE.Group>(null);
-  useFrame(({clock}) => {
-    if (ref.current) {
-      ref.current.rotation.y =
-        Math.PI + Math.sin(clock.getElapsedTime() * 0.8) * 0.65;
-    }
-  });
-  return (
-    <group ref={ref} position={[0, -0.82, 0]}>
-      <TravelerPip
-        walking={false}
-        celebrating={false}
-        tunicColor={cosmetic.tunicColor}
-        scarfColor={cosmetic.scarfColor}
-        capColor={cosmetic.capColor}
-        enablePointLight={false}
-      />
-    </group>
-  );
-}
-
-const PREVIEW_CAM = {
-  fov: 32,
-  position: [0, 0.32, 3.2] as [number, number, number],
-};
-
-// =========================================================================
 // 10-LEVEL SELECTION SCREEN (With Environment Palette Previews)
 // =========================================================================
 
 export function LevelSelectModal({
   saveData,
   currentLevel,
+  isRewardedAdSupported = false,
   onSelectLevel,
+  onUnlockLevelWithAd,
   onClose,
 }: {
   saveData: SaveData;
   currentLevel: number;
+  isRewardedAdSupported?: boolean;
   onSelectLevel: (levelNumber: number) => void;
+  onUnlockLevelWithAd?: (levelNumber: number) => void;
   onClose: () => void;
 }) {
   const completedSet = new Set(saveData.completedLevels);
@@ -153,6 +131,8 @@ export function LevelSelectModal({
           {LEVELS.map((lvl) => {
             const isCompleted = completedSet.has(lvl.levelNumber);
             const isUnlocked = lvl.levelNumber <= saveData.highestUnlockedLevel;
+            const canUnlockWithAd =
+              !isUnlocked && isRewardedAdSupported && Boolean(onUnlockLevelWithAd);
             const isCurrent = lvl.levelNumber === currentLevel;
             const hasCheckpoint =
               saveData.checkpoint?.levelNumber === lvl.levelNumber;
@@ -165,18 +145,24 @@ export function LevelSelectModal({
               <button
                 key={lvl.levelNumber}
                 type="button"
-                disabled={!isUnlocked}
+                disabled={!isUnlocked && !canUnlockWithAd}
                 onClick={() => {
-                  if (!isUnlocked) return;
-                  gameAudio.playConfirmSelect();
-                  onSelectLevel(lvl.levelNumber);
+                  if (isUnlocked) {
+                    gameAudio.playConfirmSelect();
+                    onSelectLevel(lvl.levelNumber);
+                  } else if (canUnlockWithAd && onUnlockLevelWithAd) {
+                    gameAudio.playCrispClick();
+                    onUnlockLevelWithAd(lvl.levelNumber);
+                  }
                 }}
                 className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 min-h-[76px] ${
-                  !isUnlocked
+                  !isUnlocked && !canUnlockWithAd
                     ? 'bg-[#1c1830]/75 border-[#7d70a6]/25 opacity-60 cursor-not-allowed'
-                    : isCurrent
-                      ? 'bg-[#3c345e] border-[#e0917a] shadow-lg'
-                      : 'bg-[#342e54] hover:bg-[#413966] border-[#a498cc]/50 cursor-pointer'
+                    : canUnlockWithAd
+                      ? 'bg-[#2a2346] hover:bg-[#3a315e] border-[#f2d388]/45 cursor-pointer'
+                      : isCurrent
+                        ? 'bg-[#3c345e] border-[#e0917a] shadow-lg'
+                        : 'bg-[#342e54] hover:bg-[#413966] border-[#a498cc]/50 cursor-pointer'
                 }`}>
                 <div className="flex items-center gap-3 min-w-0">
                   <div
@@ -202,8 +188,13 @@ export function LevelSelectModal({
                       <span className="px-2 py-0.5 rounded-full bg-[#231f3b] text-[10px] font-semibold text-[#b4a7db]">
                         {lvl.themeLabel}
                       </span>
-                      <span className="text-[10px] text-[#7ebdb6] font-medium">
-                        {isUnlocked ? lvl.difficulty : 'Locked'}
+                      <span
+                        className={`text-[10px] font-medium ${canUnlockWithAd ? 'text-[#f2d388]' : 'text-[#7ebdb6]'}`}>
+                        {isUnlocked
+                          ? lvl.difficulty
+                          : canUnlockWithAd
+                            ? 'Watch Ad to Unlock'
+                            : 'Locked'}
                       </span>
                     </div>
                   </div>
@@ -214,14 +205,17 @@ export function LevelSelectModal({
                     {'★'.repeat(relicsHere)}
                     {'☆'.repeat(Math.max(0, lvl.relics.length - relicsHere))}
                   </div>
-                  <div className="text-[11px] text-[#7ebdb6] font-semibold">
+                  <div
+                    className={`text-[11px] font-semibold ${canUnlockWithAd ? 'text-[#f2d388]' : 'text-[#7ebdb6]'}`}>
                     {hasCheckpoint
                       ? 'Resume →'
                       : bestScore > 0
                         ? `${bestScore} pts`
                         : isUnlocked
                           ? 'Enter →'
-                          : `W${lvl.levelNumber - 1}`}
+                          : canUnlockWithAd
+                            ? 'Unlock (Ad) →'
+                            : `W${lvl.levelNumber - 1}`}
                   </div>
                 </div>
               </button>
@@ -336,15 +330,14 @@ export function CharacterProfileModal({
 
         <div className="grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-4 items-center bg-[#342e54] border border-[#a498cc]/40 rounded-xl p-4">
           <div className="w-full h-40 rounded-xl bg-gradient-to-b from-[#463e6e] to-[#231f3b] border border-[#a498cc]/30 overflow-hidden">
-            <Canvas camera={PREVIEW_CAM} dpr={[1, 1.5]}>
-              <ambientLight intensity={1.8} color="#f6e7f2" />
-              <directionalLight
-                position={[2, 4, 3]}
-                intensity={2.5}
-                color="#fff7e8"
-              />
-              <SpinningPreviewPip cosmetic={activeCosmetic} />
-            </Canvas>
+            <Suspense
+              fallback={
+                <div className="w-full h-full flex items-center justify-center text-xs text-[#b4a7db]">
+                  Loading Pip...
+                </div>
+              }>
+              <LazyCharacterPreview3D cosmetic={activeCosmetic} />
+            </Suspense>
           </div>
 
           <div className="flex flex-col gap-2 text-xs text-[#e6dced] leading-relaxed">
@@ -724,15 +717,15 @@ export function StartMenuOverlay({
     <ScrollableModal
       zIndex={40}
       backdropClass="bg-[#18152b]/45 backdrop-blur-[2px]">
-      <div className="w-full max-w-md bg-[#231f3b]/92 border-2 border-[#a498cc] rounded-2xl p-6 sm:p-7 shadow-2xl flex flex-col items-center text-center">
-        <div className="w-full flex items-center justify-between mb-2">
+      <div className="w-full max-w-md bg-[#231f3b]/92 border-2 border-[#a498cc] rounded-2xl p-4 sm:p-7 shadow-2xl flex flex-col items-center text-center">
+        <div className="w-full flex items-center justify-between mb-1.5 sm:mb-2">
           <button
             type="button"
             onClick={() => {
               gameAudio.playCrispClick();
               onOpenCharacter();
             }}
-            className="px-3 py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#7ebdb6]/45 text-[11px] font-semibold text-[#7ebdb6] transition-colors">
+            className="min-h-[38px] px-3 py-1 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#7ebdb6]/45 text-[11px] font-semibold text-[#7ebdb6] transition-colors max-w-[70%] truncate">
             ✦ {saveData.profile.displayName}
           </button>
           <button
@@ -742,7 +735,7 @@ export function StartMenuOverlay({
               gameAudio.playCrispClick();
               onToggleMusic();
             }}
-            className="w-10 h-10 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#a498cc]/50 flex items-center justify-center text-[#f3ece1]">
+            className="w-10 h-10 rounded-full bg-[#342e54] hover:bg-[#473f70] border border-[#a498cc]/50 flex items-center justify-center text-[#f3ece1] shrink-0">
             {saveData.settings.musicMuted ? (
               <VolumeX size={16} />
             ) : (
@@ -752,17 +745,17 @@ export function StartMenuOverlay({
         </div>
 
         <h1
-          className="text-4xl sm:text-5xl font-bold text-[#f2d388] mb-2 tracking-wide"
+          className="text-3xl sm:text-5xl font-bold text-[#f2d388] mb-1.5 sm:mb-2 tracking-wide"
           style={{fontFamily: THEME.fontDisplay}}>
           {title}
         </h1>
-        <p className="text-xs sm:text-sm text-[#e6dced] mb-5 leading-relaxed">
+        <p className="text-xs sm:text-sm text-[#e6dced] mb-3.5 sm:mb-5 leading-relaxed">
           Guide Pip across ancient celestial islands by turning astrolabe
           bridges, attuning crystal prisms, and aligning impossible pathways.
         </p>
 
         {hasProgress && (
-          <div className="w-full mb-4 px-3.5 py-2 rounded-xl bg-[#342e54] border border-[#7ebdb6]/35 flex items-center justify-between text-xs">
+          <div className="w-full mb-3 sm:mb-4 px-3.5 py-2 rounded-xl bg-[#342e54] border border-[#7ebdb6]/35 flex items-center justify-between text-xs">
             <span className="text-[#7ebdb6] font-semibold">
               Worlds Lit: {completedCount}/{TOTAL_LEVELS}
             </span>
@@ -772,7 +765,7 @@ export function StartMenuOverlay({
           </div>
         )}
 
-        <div className="w-full flex flex-col gap-2.5">
+        <div className="w-full flex flex-col gap-2 sm:gap-2.5">
           <button
             type="button"
             onClick={onContinue}

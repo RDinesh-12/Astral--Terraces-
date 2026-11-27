@@ -1,9 +1,7 @@
 import './index.css';
-import {createRoot} from 'react-dom/client';
-import App from './App';
+import {platformBridge} from './platform/platformBridge';
 
-// Self-contained in immutable index.tsx so LLM edits to input.ts cannot break
-// entrypoint imports or drop protection for @react-three/drei PointerLockControls.
+// Self-contained pointer lock protection before 3D controls load.
 const SAFE_POINTER_LOCK_PATCHED = '__playgroundSafePointerLockPatched__';
 
 function ensureSafePointerLockPatch(): void {
@@ -37,20 +35,42 @@ function ensureSafePointerLockPatch(): void {
 
 ensureSafePointerLockPatch();
 
-const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error('Root element not found');
-}
-const root = createRoot(rootElement);
+async function bootstrap() {
+  const rootElement = document.getElementById('root');
+  if (!rootElement) {
+    throw new Error('Root element not found');
+  }
 
-root.render(
-  <div
-    style={{
-      position: 'relative',
-      width: '100vw',
-      height: '100vh',
-      overflow: 'hidden',
-    }}>
-    <App />
-  </div>,
-);
+  // Immediate splash in pure DOM with zero React/Three/Rapier dependency
+  rootElement.innerHTML =
+    '<div style="width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#17132a;color:#f2d388;font-family:Georgia,serif;"><div style="font-size:28px;font-weight:700;letter-spacing:0.5px;">Astral Terraces</div><div style="margin-top:10px;font-family:system-ui,sans-serif;font-size:13px;color:#7ebdb6;">Awakening Celestial Sanctuary...</div></div>';
+
+  // 1. Initialize host platform SDK immediately before heavy 3D/WASM bundles load
+  const bridgeReadyPromise = Promise.race([
+    platformBridge.init().catch(() => null),
+    new Promise((resolve) => window.setTimeout(resolve, 4000)),
+  ]);
+
+  // 2. Dynamically load React + UI shell chunks cleanly
+  const [reactMod, {createRoot}, {default: BootstrapRoot}] = await Promise.all([
+    import('react'),
+    import('react-dom/client'),
+    import('./BootstrapRoot'),
+  ]);
+  const createElement =
+    (
+      reactMod as unknown as {
+        createElement?: typeof reactMod.default.createElement;
+        default: typeof reactMod.default;
+      }
+    ).createElement ?? reactMod.default.createElement;
+
+  await bridgeReadyPromise;
+
+  const root = createRoot(rootElement);
+  root.render(createElement(BootstrapRoot));
+}
+
+bootstrap().catch((err) => {
+  console.error('[Astral Terraces] Bootstrap error:', err);
+});
